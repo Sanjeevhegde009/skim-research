@@ -15,6 +15,14 @@ COMPILER_BASE_URL = ""
 COMPILER_API_KEY_ENV = "OPENAI_API_KEY"
 COMPILER_MODEL = "gpt-4o-mini"
 
+# ── Judge (answer scoring only) ──
+# Defaults to the compiler, so existing runs are unchanged. Decoupled so the judge can stay on a
+# frontier API while the compiler/indexer runs locally (a fully-local pipeline, judged fairly).
+JUDGE_PROVIDER    = COMPILER_PROVIDER
+JUDGE_BASE_URL    = COMPILER_BASE_URL
+JUDGE_API_KEY_ENV = COMPILER_API_KEY_ENV
+JUDGE_MODEL       = COMPILER_MODEL
+
 # ── Query model ──
 # Set QUERY_PROVIDER to "ollama" for local SLM, or same as compiler for API-based
 QUERY_PROVIDER = "openai"

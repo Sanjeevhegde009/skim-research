@@ -107,6 +107,19 @@ def _call_openai_compat(prompt, system, temperature, model, api_key_env, provide
     return resp.json()["choices"][0]["message"]["content"].strip()
 
 
+def _call_ollama(prompt, system, temperature, model):
+    messages = []
+    if system: messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    resp = requests.post(
+        config.OLLAMA_URL,
+        json={"model": model, "messages": messages, "stream": False, "think": False,
+              "options": {"temperature": temperature, "num_ctx": OLLAMA_NUM_CTX}},
+        timeout=600)
+    resp.raise_for_status()
+    return resp.json()["message"]["content"].strip()
+
+
 # Count of compiler calls that hard-failed (exhausted retries). Callers can check
 # this around compilation: any failure means results have holes and must NOT be
 # cached as complete.
@@ -117,7 +130,10 @@ def compiler_call(prompt: str, system: str = "", temperature: float = 0.0) -> st
     """Call compiler model. Temperature defaults to 0.0 for determinism."""
     global COMPILER_FAILURES
     try:
-        if config.COMPILER_PROVIDER == "anthropic":
+        if config.COMPILER_PROVIDER == "ollama":
+            return _api_call_with_retry(lambda: _call_ollama(
+                prompt, system, temperature, config.COMPILER_MODEL))
+        elif config.COMPILER_PROVIDER == "anthropic":
             return _api_call_with_retry(lambda: _call_anthropic(
                 prompt, system, temperature,
                 config.COMPILER_MODEL, config.COMPILER_API_KEY_ENV))
@@ -129,6 +145,25 @@ def compiler_call(prompt: str, system: str = "", temperature: float = 0.0) -> st
     except Exception as e:
         COMPILER_FAILURES += 1
         print(f"  [COMPILER ERROR] {e}")
+        return ""
+
+
+def judge_call(prompt: str, system: str = "", temperature: float = 0.0) -> str:
+    """Answer-scoring judge. Separate from compiler_call so the judge can stay on a frontier
+    API while the compiler/indexer runs locally. Uses config.JUDGE_* (defaults to the compiler)."""
+    try:
+        if config.JUDGE_PROVIDER == "ollama":
+            return _api_call_with_retry(lambda: _call_ollama(
+                prompt, system, temperature, config.JUDGE_MODEL))
+        elif config.JUDGE_PROVIDER == "anthropic":
+            return _api_call_with_retry(lambda: _call_anthropic(
+                prompt, system, temperature, config.JUDGE_MODEL, config.JUDGE_API_KEY_ENV))
+        else:
+            return _api_call_with_retry(lambda: _call_openai_compat(
+                prompt, system, temperature, config.JUDGE_MODEL, config.JUDGE_API_KEY_ENV,
+                config.JUDGE_PROVIDER, config.JUDGE_BASE_URL))
+    except Exception as e:
+        print(f"  [JUDGE ERROR] {e}")
         return ""
 
 

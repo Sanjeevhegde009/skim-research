@@ -14,7 +14,7 @@ import re
 import string
 from collections import Counter
 
-from llm import compiler_call
+from llm import judge_call
 
 
 # ─────────────────────────────────────────────
@@ -107,7 +107,7 @@ Scoring:
 
 JSON only:"""
 
-    raw = compiler_call(prompt, temperature=0.0)
+    raw = judge_call(prompt, temperature=0.0)
     try:
         clean = raw.strip()
         if clean.startswith("```"): clean = clean.split("\n", 1)[1].rsplit("```", 1)[0]

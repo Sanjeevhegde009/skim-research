@@ -28,14 +28,18 @@ from evaluate import score_answer, token_f1
 import config
 import pageindex
 
-# Reader override — swap the query model/provider without editing config.py.
-#   READER_PROVIDER : "openai" (config default) or "ollama" for a local model
-#   READER_MODEL    : e.g. gpt-4o, or a local Ollama tag like gemma4:e4b
-# Unset = use config.py as-is, so switching back to the API reader needs no change.
-_rp = os.environ.get("READER_PROVIDER", "").strip()
-_rm = os.environ.get("READER_MODEL", "").strip()
-if _rp: config.QUERY_PROVIDER = _rp
-if _rm: config.QUERY_MODEL = _rm
+# Model overrides — swap any of the three models via env, no config.py edit needed.
+#   READER_*   (-> QUERY_*)  : navigation + answering
+#   COMPILER_*               : index building
+#   JUDGE_*                  : answer scoring (keep on an API for fair, comparable grading)
+# Provider is "openai" (default) or "ollama"; model is e.g. gpt-4o or a tag like gemma4:e4b.
+# Unset = config.py defaults, so the all-API setup needs no change.
+for _env, _attr in [("READER_PROVIDER", "QUERY_PROVIDER"), ("READER_MODEL", "QUERY_MODEL"),
+                    ("COMPILER_PROVIDER", "COMPILER_PROVIDER"), ("COMPILER_MODEL", "COMPILER_MODEL"),
+                    ("JUDGE_PROVIDER", "JUDGE_PROVIDER"), ("JUDGE_MODEL", "JUDGE_MODEL")]:
+    _v = os.environ.get(_env, "").strip()
+    if _v:
+        setattr(config, _attr, _v)
 
 # RAG and base runs write to separate subdirs so they never overwrite each other.
 OUT = config.RESULTS_DIR / "locomo" / ("rag" if pageindex.PI_RAG else "base")
