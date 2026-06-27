@@ -30,8 +30,11 @@ LLM-call plumbing was kept, now in `llm.py`.
 pip install requests
 export OPENAI_API_KEY=sk-...        # keys live in env vars only, never in files
 ```
-Datasets are **not** committed (large) — place `locomo10.json` and `longmemeval_s.json`
-at the repo root.
+Datasets are **not** committed (large). Download them fresh from their original public
+sources into the repo root:
+```bash
+./download_data.sh    # locomo10.json (2.7M, GitHub) + longmemeval_s.json (265M, HuggingFace)
+```
 
 ## Run
 ```bash
