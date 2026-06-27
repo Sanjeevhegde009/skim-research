@@ -4,7 +4,8 @@
 # Both files are .gitignore'd (large) — run this once in the project root.
 #
 #   LoCoMo         locomo10.json       (~2.7M)   snap-research/locomo       (GitHub)
-#   LongMemEval_S  longmemeval_s.json  (~265M)   xiaowu0162/longmemeval     (HuggingFace, public)
+#   LongMemEval_S  longmemeval_s.json  (~265M)   xiaowu0162/longmemeval-cleaned (HuggingFace, official)
+#                  (the original xiaowu0162/longmemeval is deprecated; cleaned removes noisy sessions)
 #
 # (longmemeval_session_summaries.json is NOT a source dataset — run_longmemeval.py
 #  regenerates it as a cache.)
@@ -16,9 +17,9 @@ echo "[1/2] locomo10.json  <- snap-research/locomo (GitHub) ..."
 curl -L --fail -o locomo10.json \
   "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
 
-echo "[2/2] longmemeval_s.json  <- HuggingFace xiaowu0162/longmemeval (~265M) ..."
+echo "[2/2] longmemeval_s.json  <- HuggingFace xiaowu0162/longmemeval-cleaned (~265M) ..."
 curl -L --fail -o longmemeval_s.json \
-  "https://huggingface.co/datasets/xiaowu0162/longmemeval/resolve/main/longmemeval_s"
+  "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json"
 
 echo
 echo "Done:"
