@@ -17,6 +17,7 @@ Run:  set OPENAI_API_KEY=sk-...
       python run_all_pageindex.py 0 3        # convs 0,1,2 (end exclusive)
 """
 import json
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -26,6 +27,15 @@ from locomo_loader import load_conversations
 from evaluate import score_answer, token_f1
 import config
 import pageindex
+
+# Reader override — swap the query model/provider without editing config.py.
+#   READER_PROVIDER : "openai" (config default) or "ollama" for a local model
+#   READER_MODEL    : e.g. gpt-4o, or a local Ollama tag like gemma4:e4b
+# Unset = use config.py as-is, so switching back to the API reader needs no change.
+_rp = os.environ.get("READER_PROVIDER", "").strip()
+_rm = os.environ.get("READER_MODEL", "").strip()
+if _rp: config.QUERY_PROVIDER = _rp
+if _rm: config.QUERY_MODEL = _rm
 
 # RAG and base runs write to separate subdirs so they never overwrite each other.
 OUT = config.RESULTS_DIR / "locomo" / ("rag" if pageindex.PI_RAG else "base")

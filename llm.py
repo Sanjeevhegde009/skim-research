@@ -16,6 +16,11 @@ import requests
 
 import config
 
+# Ollama context window. 8192 covers the navigation + answer prompts; without it Ollama
+# silently truncates to its 2048 default and navigation breaks. Ollama-only — no effect on
+# the openai/anthropic branches. Override with the OLLAMA_NUM_CTX env var.
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+
 
 def _get_api_key(env_var):
     key = os.environ.get(env_var, "")
@@ -136,7 +141,7 @@ def query_call(messages: list, temperature: float = 0.1) -> str:
                 json={"model": config.QUERY_MODEL, "messages": messages,
                       "stream": False,
                       "think": False,
-                      "options": {"temperature": temperature}},
+                      "options": {"temperature": temperature, "num_ctx": OLLAMA_NUM_CTX}},
                 timeout=600)
             resp.raise_for_status()
             return resp.json()["message"]["content"].strip()
