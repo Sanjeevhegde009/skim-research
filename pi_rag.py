@@ -11,7 +11,7 @@ multi-hop, and adversarial alike:
      probe found nothing, or any needed fact is missing / weakly / tangentially evidenced, refuse.
 
 Bounded by construction — fixed sub-questions, one retrieval each, one synthesis, no loop. Reuses
-hlma's request plumbing for the embeddings call and query_call for decompose/synthesis, so stable
+llm's request plumbing for the embeddings call and query_call for decompose/synthesis, so stable
 PageIndex stays untouched.
 """
 import json
@@ -24,7 +24,7 @@ from pathlib import Path
 import requests
 
 import config
-from hlma import _get_api_key, _api_call_with_retry, query_call, estimate_tokens
+from llm import _get_api_key, _api_call_with_retry, query_call, estimate_tokens
 
 EMB_MODEL = "text-embedding-3-small"
 EMB_DIM = 512        # reduced dims (3-small supports it): smaller cache, faster pure-python cosine

@@ -1,12 +1,11 @@
 """
-Run the PageIndex-over-raw experiment and compare head-to-head with stable HLMA.
+Run PageIndex-over-raw on a LoCoMo conversation.
 
-Builds the session index (cached), answers all QA via navigate-then-read, scores with the
-SAME harness HLMA uses (score_answer judge 0-2 + token_f1), and prints PageIndex vs the
-stable HLMA results (eval_conv{N}_results.json, which on this branch is the e0a8868 baseline)
-side by side — per category and overall, with adversarial as the kill-switch.
+Builds the session index (cached), answers all QA via navigate-then-read, scores with
+score_answer (judge 0-2) + token_f1, and prints results per category and overall, with
+adversarial as the kill-switch.
 
-Run:  set OPENAI_API_KEY=sk-...
+Run:  export OPENAI_API_KEY=sk-...
       python run_pageindex.py 0          # full conv 0
       python run_pageindex.py 0 30       # first 30 (cheap probe first)
 """
@@ -73,7 +72,7 @@ def main():
 
     Path(f"pageindex_conv{cid}_results.json").write_text(json.dumps(results, indent=1))
 
-    # ---- Full HLMA-style RESULTS block ----
+    # ---- Full RESULTS block ----
     n = len(results)
     avg = lambda f: sum(f(r) for r in results) / n if n else 0
     print("\n" + "=" * 70)
@@ -97,35 +96,16 @@ def main():
         a = _agg(results)[c]
         print(f"  {c:<16} {a[1]/a[0]:.2f} / {a[2]/a[0]:.3f}")
 
-    # Side-by-side with stable HLMA (eval_conv{cid}_results.json == e0a8868 on this branch)
+    # Overall PageIndex summary
     pi = _agg(results)
-    hl = None
-    p = Path(f"eval_conv{cid}_results.json")
-    if p.exists():
-        h = json.loads(p.read_text()); h = h["hlma"] if isinstance(h, dict) else h
-        # restrict HLMA to the same questions when limited
-        if limit:
-            qset = {r["question"] for r in results}
-            h = [x for x in h if x["question"] in qset]
-        hl = _agg(h)
-
-    print("\n" + "=" * 70)
-    print(f"conv {cid}     {'PAGEINDEX (judge/F1)':>22}   {'HLMA stable (judge/F1)':>24}")
-    cats = sorted(set(list(pi) + (list(hl) if hl else [])))
-    tpi = [0, 0.0, 0.0, 0]; thl = [0, 0.0, 0.0, 0]
-    for c in cats:
-        a = pi.get(c, [0, 0.0, 0.0, 0]); b = hl.get(c, [0, 0.0, 0.0, 0]) if hl else [0, 0.0, 0.0, 0]
+    tot = [0, 0.0, 0.0, 0]
+    for c in pi:
         for k in range(4):
-            tpi[k] += a[k]; thl[k] += b[k]
-        pis = f"{a[1]/a[0]:.2f}/{a[2]/a[0]:.3f}" if a[0] else "-"
-        hls = f"{b[1]/b[0]:.2f}/{b[2]/b[0]:.3f}" if b[0] else "-"
-        print(f"  {c:<12} {pis:>22}   {hls:>24}")
-    print("-" * 70)
-    pis = f"{tpi[1]/tpi[0]:.2f}/{tpi[2]/tpi[0]:.3f}" if tpi[0] else "-"
-    hls = f"{thl[1]/thl[0]:.2f}/{thl[2]/thl[0]:.3f}" if thl[0] else "-"
-    print(f"  {'OVERALL':<12} {pis:>22}   {hls:>24}")
-    print(f"  {'hallucinations':<12} {tpi[3]:>22}   {thl[3]:>24}")
-    print("\nVERDICT: does PageIndex-over-raw match HLMA overall AND hold adversarial?")
+            tot[k] += pi[c][k]
+    print("-" * 36)
+    ov = f"{tot[1]/tot[0]:.2f} / {tot[2]/tot[0]:.3f}" if tot[0] else "-"
+    print(f"  {'OVERALL':<16} {ov}")
+    print(f"  {'hallucinations':<16} {tot[3]}")
 
 
 if __name__ == "__main__":

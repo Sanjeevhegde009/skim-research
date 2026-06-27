@@ -1,30 +1,29 @@
 """
 PageIndex-style VECTORLESS RAG over the RAW conversation (experiment branch).
 
-No embeddings, no HLMA compilation. The pipeline is index-then-navigate:
+No embeddings, no wiki compilation. The pipeline is index-then-navigate:
   1. BUILD a tree index — one node per session, each with an LLM-written "table of contents"
      summary of what that session covers (cached to pageindex_<sample_id>.json).
   2. At query time, the LLM NAVIGATES by reasoning — reads the session summaries and picks the
      session(s) most likely to hold the answer (no similarity math).
   3. READ the chosen sessions' raw turns and ANSWER with a conservative, date-aware,
-     refuse-if-absent prompt (mirrors HLMA's discipline so the head-to-head is fair).
+     refuse-if-absent prompt (conservative, cite-or-refuse discipline).
 
-Reuses hlma's LLM plumbing (compiler_call / query_call) + config. Kept fully separate from
-hlma.py so the stable framework is untouched.
+Reuses llm.py's plumbing (compiler_call / query_call) + config.
 """
 import json
 import os
 import re
 from pathlib import Path
 
-from hlma import compiler_call, query_call, estimate_tokens
+from llm import compiler_call, query_call, estimate_tokens
 
 # Bounded, type-gated reasoning in the ANSWER step (default off; base path unchanged).
 # Only questions that need SERIAL computation get a scratchpad; the rest stay terse.
 # The trigger is language-general (count/compare/duration/state/intersection) — NOT tuned to
 # any dataset. Reasoning is bounded to a few steps in one capped call (it cannot run forever),
-# and the final answer is extracted terse so token-F1 isn't penalised. Toggle: HLMA_PI_REASON=1
-PI_REASON = os.environ.get("HLMA_PI_REASON", "").lower() in ("1", "true", "yes")
+# and the final answer is extracted terse so token-F1 isn't penalised. Toggle: PI_REASON=1
+PI_REASON = os.environ.get("PI_REASON", "").lower() in ("1", "true", "yes")
 
 # RAG escalation on the refusal RESIDUE (default off; stable base path unchanged). When the base
 # navigate->answer refuses, hand the question to pi_rag: decompose into 3-5 sub-questions, semantic-
@@ -59,8 +58,8 @@ def _turns_block(turns, dated=False):
 
 
 def build_index(conv, force=False):
-    """One LLM-summarized node per session. Cached; ~one call per session (lighter than
-    HLMA's multi-pass compile). Returns {'sample_id', 'nodes': [{key,date,summary,turns}]}."""
+    """One LLM-summarized node per session. Cached; ~one call per session.
+    Returns {'sample_id', 'nodes': [{key,date,summary,turns}]}."""
     path = Path(f"pageindex_{conv['sample_id']}.json")
     if path.exists() and not force:
         return json.loads(path.read_text())
@@ -123,7 +122,7 @@ def _navigate(question, nodes, broad=False, trace=None):
 
 
 def _answer(question, turns, trace=None):
-    """Conservative, date-aware, refuse-if-absent answer — mirrors HLMA's discipline.
+    """Conservative, date-aware, refuse-if-absent answer — cite-or-refuse discipline.
     For computational questions (when PI_REASON is on) the model reasons in a BOUNDED
     scratchpad first, then emits a terse final answer; otherwise it answers directly."""
     body = _turns_block(turns, dated=True)

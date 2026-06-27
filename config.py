@@ -1,4 +1,4 @@
-"""HLMA MVP Configuration"""
+"""pageindex-rag configuration"""
 
 # ── Compiler (frontier model for entity pages, summaries, scoring) ──
 COMPILER_PROVIDER = "openai"   # "anthropic", "openai", "openai_compatible"

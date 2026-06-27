@@ -13,7 +13,7 @@ per-query calls — cheap. Outputs are suffixed by the reader so a non-default r
 gpt-4.1-mini results. Actual reader-token usage is metered (real `usage` from the API) and priced.
 
 BEST-CONFIG GUARD: aborts unless PI_RAG / HYBRID / INFER are all ON, so a weaker config can't be
-mistaken for the real one. pageindex.py / pi_rag.py / evaluate.py / hlma.py stay byte-identical.
+mistaken for the real one. pageindex.py / pi_rag.py / evaluate.py / llm.py stay byte-identical.
 
 Run (Windows cmd):
   set OPENAI_API_KEY=sk-...
@@ -36,7 +36,7 @@ from pathlib import Path
 import requests
 
 import config
-import hlma
+import llm
 import longmemeval_loader
 from evaluate import score_answer, token_f1
 import pageindex
@@ -78,9 +78,9 @@ def _cost(model, tin, tout):
 
 
 def _tracking_query_call(messages, temperature=0.1):
-    """Mirror of hlma.query_call (openai/ollama) that ALSO records actual token usage — and, for
+    """Mirror of llm.query_call (openai/ollama) that ALSO records actual token usage — and, for
     Ollama, sets num_ctx so the long navigation prompt isn't silently truncated. Installed onto
-    pageindex/pi_rag's query_call binding so every reader call is metered; hlma.py stays untouched."""
+    pageindex/pi_rag's query_call binding so every reader call is metered; llm.py stays untouched."""
     if config.QUERY_PROVIDER == "ollama":
         def _do():
             resp = requests.post(config.OLLAMA_URL,
@@ -95,7 +95,7 @@ def _tracking_query_call(messages, temperature=0.1):
             _Q["in"] += pin; _Q["out"] += pout; _Q["calls"] += 1
             return j["message"]["content"].strip()
     else:
-        key = hlma._get_api_key(config.QUERY_API_KEY_ENV)
+        key = llm._get_api_key(config.QUERY_API_KEY_ENV)
         if not key:
             return ""
         def _do():
@@ -112,7 +112,7 @@ def _tracking_query_call(messages, temperature=0.1):
             _Q["in"] += pin; _Q["out"] += pout; _Q["calls"] += 1
             return j["choices"][0]["message"]["content"].strip()
     try:
-        return hlma._api_call_with_retry(_do)
+        return llm._api_call_with_retry(_do)
     except Exception as e:
         print(f"  [QUERY ERROR] {e}")
         return ""
@@ -281,8 +281,8 @@ def main():
             if h in seen:
                 continue
             seen.add(h)
-            idx_in += hlma.estimate_tokens(body) + 50        # session body + prompt boilerplate
-            idx_out += hlma.estimate_tokens(cache.get(h, ""))  # the cached summary
+            idx_in += llm.estimate_tokens(body) + 50        # session body + prompt boilerplate
+            idx_out += llm.estimate_tokens(cache.get(h, ""))  # the cached summary
     _report(results, idx_in, idx_out)
 
 

@@ -1,10 +1,8 @@
 """
 Run PageIndex-over-raw across ALL LoCoMo conversations with FULL per-question tracing.
 
-Everything is written under pageindex_runs/ and prefixed pageindex_ — HLMA's files
-(eval_*, *_run.log, eval_all_summary.*) are NEVER written or replaced; they are only read
-(read-only) to print a side-by-side comparison. Indexes are cached at root as
-pageindex_<sample_id>.json and reused.
+Everything is written under pageindex_runs/ and prefixed pageindex_. Indexes are cached at
+root as pageindex_<sample_id>.json and reused.
 
 Per conversation it writes:
   pageindex_runs/pageindex_conv{N}_results.json   compact scored results
@@ -13,7 +11,7 @@ Per conversation it writes:
                                                   answerer saw, gold evidence ids, judge verdict
   pageindex_runs/pageindex_conv{N}.log            human-readable streaming log
 And after every conversation (crash-safe):
-  pageindex_runs/pageindex_all_summary.txt / .json   cross-conv table + HLMA comparison
+  pageindex_runs/pageindex_all_summary.txt / .json   cross-conv roll-up table
 
 Run:  set OPENAI_API_KEY=sk-...
       python run_all_pageindex.py            # all convs
@@ -57,18 +55,6 @@ def aggregate(results):
     }
 
 
-def hlma_baseline(cid):
-    """Read-only: stable HLMA per-conv results for comparison (never written)."""
-    p = Path(f"eval_conv{cid}_results.json")
-    if not p.exists():
-        return None
-    h = json.loads(p.read_text()); h = h["hlma"] if isinstance(h, dict) else h
-    return aggregate([{"category": x["category"], "score": x.get("score", 0),
-                       "f1": x.get("f1", 0.0), "token_f1": x.get("token_f1", 0),
-                       "hallucination": x.get("hallucination"),
-                       "tok_nav": 0, "tok_ans": x.get("tokens_est", 0)} for x in h])
-
-
 def run_conv(cid, conv):
     logp = OUT / f"pageindex_conv{cid}.log"
     tracep = OUT / f"pageindex_conv{cid}_trace.jsonl"
@@ -107,10 +93,9 @@ def run_conv(cid, conv):
     return results
 
 
-def _conv_block(cid, s, hb):
-    """The full per-conversation RESULTS block — identical layout to run_pageindex.py's
-    single-conv print (metrics + navigate/answer token split + by-category + the side-by-side
-    with stable HLMA). hb is the read-only HLMA aggregate (or None)."""
+def _conv_block(cid, s):
+    """The full per-conversation RESULTS block — metrics + navigate/answer token split +
+    by-category + an overall summary."""
     n = s["n"]
     L = ["=" * 70,
          f"RESULTS - Conv {cid}: {s.get('speakers', '')}  (PageIndex over raw)",
@@ -133,21 +118,9 @@ def _conv_block(cid, s, hb):
         if c in s["categories"]:
             cc = s["categories"][c]
             L.append(f"  {c:<16} {cc['score']:.2f} / {cc['token_f1']:.3f}")
-    # side-by-side with stable HLMA (read-only)
-    L += ["", "=" * 70,
-          f"conv {cid}     {'PAGEINDEX (judge/F1)':>22}   {'HLMA stable (judge/F1)':>24}"]
-    for c in sorted(set(list(s["categories"]) + (list(hb["categories"]) if hb else []))):
-        pc = s["categories"].get(c)
-        hc = hb["categories"].get(c) if hb else None
-        pis = f"{pc['score']:.2f}/{pc['token_f1']:.3f}" if pc else "-"
-        hls = f"{hc['score']:.2f}/{hc['token_f1']:.3f}" if hc else "-"
-        L.append(f"  {c:<12} {pis:>22}   {hls:>24}")
-    L.append("-" * 70)
-    pis = f"{s['avg_score']:.2f}/{s['avg_token_f1']:.3f}"
-    hls = f"{hb['avg_score']:.2f}/{hb['avg_token_f1']:.3f}" if hb else "-"
-    L.append(f"  {'OVERALL':<12} {pis:>22}   {hls:>24}")
-    hh = str(hb["hallucinations"]) if hb else "-"
-    L.append(f"  {'hallucinations':<12} {str(s['hallucinations']):>22}   {hh:>24}")
+    L.append("-" * 36)
+    L.append(f"  {'OVERALL':<16} {s['avg_score']:.2f} / {s['avg_token_f1']:.3f}")
+    L.append(f"  {'hallucinations':<16} {s['hallucinations']}")
     L.append("")
     return L
 
@@ -163,32 +136,24 @@ def write_summary(summary):
     done = []
     for cid in sorted(summary, key=int):
         s = summary[cid]
-        hb = hlma_baseline(cid)
-        lines += _conv_block(cid, s, hb)
-        done.append((s, hb))
+        lines += _conv_block(cid, s)
+        done.append(s)
     if len(done) > 1:
         lines += ["", "=" * 60, "CROSS-CONVERSATION ROLL-UP", "=" * 60,
-                  f"{'conv':<6}{'PI score/F1':>16}{'HLMA score/F1':>18}"
-                  f"{'PI hall':>9}{'PI tok/q':>10}", "-" * 60]
+                  f"{'conv':<6}{'PI score/F1':>16}{'PI hall':>9}{'PI tok/q':>10}", "-" * 60]
         for cid in sorted(summary, key=int):
             s = summary[cid]
-            hb = hlma_baseline(cid)
             pi = f"{s['avg_score']:.2f}/{s['avg_token_f1']:.3f}"
-            hl = f"{hb['avg_score']:.2f}/{hb['avg_token_f1']:.3f}" if hb else "n/a"
-            lines.append(f"{cid:<6}{pi:>16}{hl:>18}{s['hallucinations']:>9}{s['avg_tok']:>10}")
+            lines.append(f"{cid:<6}{pi:>16}{s['hallucinations']:>9}{s['avg_tok']:>10}")
         lines.append("-" * 60)
-        msp = sum(s["avg_score"] for s, _ in done) / len(done)
-        msf = sum(s["avg_token_f1"] for s, _ in done) / len(done)
-        hs = [h for _, h in done if h]
-        mhp = sum(h["avg_score"] for h in hs) / len(hs) if hs else 0
-        mhf = sum(h["avg_token_f1"] for h in hs) / len(hs) if hs else 0
+        msp = sum(s["avg_score"] for s in done) / len(done)
+        msf = sum(s["avg_token_f1"] for s in done) / len(done)
         mean_pi = f"{msp:.2f}/{msf:.3f}"
-        mean_hl = f"{mhp:.2f}/{mhf:.3f}"
-        lines.append(f"{'MEAN':<6}{mean_pi:>16}{mean_hl:>18}")
+        lines.append(f"{'MEAN':<6}{mean_pi:>16}")
         lines += ["", "PageIndex category macro (score / token F1):"]
         for c in CATS:
-            sv = [s["categories"][c]["score"] for s, _ in done if c in s["categories"]]
-            fv = [s["categories"][c]["token_f1"] for s, _ in done if c in s["categories"]]
+            sv = [s["categories"][c]["score"] for s in done if c in s["categories"]]
+            fv = [s["categories"][c]["token_f1"] for s in done if c in s["categories"]]
             if sv:
                 lines.append(f"  {c:<14}{sum(sv) / len(sv):.3f} / {sum(fv) / len(fv):.3f}")
     (OUT / "pageindex_all_summary.txt").write_text("\n".join(lines), encoding="utf-8")
@@ -206,7 +171,7 @@ def main():
     else:
         rng = range(total)
     import pi_rag
-    print(f"PageIndex-over-raw — convs {list(rng)}  → all output under {OUT}/  (HLMA untouched)")
+    print(f"PageIndex-over-raw — convs {list(rng)}  → all output under {OUT}/")
     print(f"PI_RAG={pageindex.PI_RAG}  gate={pi_rag.PI_RAG_GATE}  hybrid={pi_rag.PI_RAG_HYBRID}  "
           f"infer={pi_rag.PI_RAG_INFER}  tau={pi_rag.TAU}\n")
     summary = {}

@@ -16,7 +16,7 @@ Run (Windows):
   set OPENAI_API_KEY=sk-...
   python rescore_longmemeval.py             # judge = gpt-4o  (override: set LME_JUDGE_MODEL=...)
 Reads longmemeval_results.json -> writes longmemeval_rescored_gpt4o.json + a side-by-side summary.
-Framework files (pageindex.py / pi_rag.py / evaluate.py / hlma.py) stay byte-identical.
+Framework files (pageindex.py / pi_rag.py / evaluate.py / llm.py) stay byte-identical.
 """
 import json
 import os
@@ -24,7 +24,7 @@ import sys
 from collections import defaultdict
 
 import config
-from hlma import _call_openai_compat, _api_call_with_retry
+from llm import _call_openai_compat, _api_call_with_retry
 from evaluate import _refused
 
 JUDGE_MODEL = os.environ.get("LME_JUDGE_MODEL", "gpt-4o")

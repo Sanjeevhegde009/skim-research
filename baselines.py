@@ -2,7 +2,7 @@
 Baselines — all use the same Ollama SLM for fair comparison.
 """
 
-from hlma import query_call, estimate_tokens
+from llm import query_call, estimate_tokens
 import config
 
 
