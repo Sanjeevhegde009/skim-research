@@ -70,7 +70,9 @@ def main():
         tag = (" rag✓RECOVERED" if tr.get("rag_recovered") else " rag·refused") if tr.get("rag_fired") else ""
         print(f"  {i+1}/{len(qa)} [{cat[:4]}] s={sc['score']} sess={r['sessions']}{tag} | {question[:42]}", flush=True)
 
-    Path(f"pageindex_conv{cid}_results.json").write_text(json.dumps(results, indent=1))
+    outdir = config.RESULTS_DIR / "locomo"
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / f"conv{cid}_results.json").write_text(json.dumps(results, indent=1))
 
     # ---- Full RESULTS block ----
     n = len(results)

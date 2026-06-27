@@ -88,7 +88,8 @@ def turn_embeddings(index, force=False):
     (turns, vecs) — turns[i] = {dia_id, speaker, text, date}, vecs[i] its unit vector. Built lazily,
     so only conversations that actually escalate pay for it."""
     sid = index["sample_id"]
-    path = Path(f"pi_rag_emb_{sid}.json")
+    config.EMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = config.EMB_CACHE_DIR / f"{sid}.json"
     turns = []
     for n in index["nodes"]:
         for t in n["turns"]:

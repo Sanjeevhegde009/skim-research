@@ -16,6 +16,7 @@ import os
 import re
 from pathlib import Path
 
+import config
 from llm import compiler_call, query_call, estimate_tokens
 
 # Bounded, type-gated reasoning in the ANSWER step (default off; base path unchanged).
@@ -60,7 +61,8 @@ def _turns_block(turns, dated=False):
 def build_index(conv, force=False):
     """One LLM-summarized node per session. Cached; ~one call per session.
     Returns {'sample_id', 'nodes': [{key,date,summary,turns}]}."""
-    path = Path(f"pageindex_{conv['sample_id']}.json")
+    config.INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    path = config.INDEX_CACHE_DIR / f"{conv['sample_id']}.json"
     if path.exists() and not force:
         return json.loads(path.read_text())
     nodes = []

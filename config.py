@@ -1,5 +1,14 @@
 """pageindex-rag configuration"""
 
+from pathlib import Path
+
+# ── Directory layout (runtime artifacts live outside the source tree) ──
+DATA_DIR        = Path("data")              # datasets (gitignored; see download_data.sh)
+CACHE_DIR       = Path("cache")             # regenerated caches (gitignored)
+RESULTS_DIR     = Path("results")           # eval outputs (gitignored)
+INDEX_CACHE_DIR = CACHE_DIR / "pageindex"   # per-session table-of-contents index
+EMB_CACHE_DIR   = CACHE_DIR / "embeddings"  # pi_rag turn embeddings
+
 # ── Compiler (frontier model for entity pages, summaries, scoring) ──
 COMPILER_PROVIDER = "openai"   # "anthropic", "openai", "openai_compatible"
 COMPILER_BASE_URL = ""
@@ -20,9 +29,9 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 RECENT_WINDOW_TURNS = 6
 
 # ── LoCoMo ──
-LOCOMO_PATH = "locomo10.json"
+LOCOMO_PATH = str(DATA_DIR / "locomo10.json")
 QA_CATEGORIES = {1: "single-hop", 2: "temporal", 3: "multi-hop", 4: "open-domain", 5: "adversarial"}
 
 # ── LongMemEval (second benchmark; per-question haystacks that overflow context) ──
-# Download longmemeval_s.json from https://github.com/xiaowu0162/longmemeval and place at repo root.
-LONGMEMEVAL_PATH = "longmemeval_s.json"
+# Fetched by download_data.sh from the official xiaowu0162/longmemeval-cleaned HF dataset.
+LONGMEMEVAL_PATH = str(DATA_DIR / "longmemeval_s.json")

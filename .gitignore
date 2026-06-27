@@ -4,22 +4,16 @@ __pycache__/
 venv/
 .venv/
 
-# Datasets — download separately (large; not part of source)
-locomo10.json
-longmemeval_s.json
+# Datasets — run ./download_data.sh (large; not committed)
+/data/*
+!/data/.gitkeep
 
-# Caches & generated artifacts (regenerated on run)
-pageindex_*.json
-pi_rag_emb_*.json
-longmemeval_session_summaries.json
+# Regenerated caches (index ToC, embeddings, LongMemEval summaries/indexes)
+/cache/
 
-# Results & summaries (regenerated on run)
-*_results.json
-*_results*.json
-longmemeval_*.json
-longmemeval_*.txt
-eval_*.json
-*_summary.txt
+# Eval outputs (regenerated; numbers are documented in README instead)
+/results/*
+!/results/.gitkeep
 
 # Secrets — keys live in env vars only, never in files
 .env

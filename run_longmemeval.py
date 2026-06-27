@@ -56,10 +56,13 @@ config.QUERY_PROVIDER = PROVIDER
 OLLAMA_NUM_CTX = int(os.environ.get("LME_OLLAMA_NUM_CTX", "8192"))
 _tag = "" if READER == DEFAULT_READER else "_" + re.sub(r"[^a-z0-9]+", "", READER.lower())
 
-INDEX_DIR = Path("longmemeval_index")          # per-question index caches (reader-independent; shared)
-SUMMARY_CACHE = Path("longmemeval_session_summaries.json")
-RESULTS_PATH = Path(f"longmemeval_results{_tag}.json")
-SUMMARY_PATH = Path(f"longmemeval_summary{_tag}.txt")
+config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_LME_RESULTS = config.RESULTS_DIR / "longmemeval"
+_LME_RESULTS.mkdir(parents=True, exist_ok=True)
+INDEX_DIR = config.CACHE_DIR / "longmemeval_index"   # per-question index caches (reader-independent; shared)
+SUMMARY_CACHE = config.CACHE_DIR / "longmemeval_session_summaries.json"
+RESULTS_PATH = _LME_RESULTS / f"results{_tag}.json"
+SUMMARY_PATH = _LME_RESULTS / f"summary{_tag}.txt"
 
 # ── token economics ──────────────────────────────────────────────────────────────
 # $/1M tokens (input, output). VERIFY against current OpenAI pricing — these change over time.
@@ -153,8 +156,8 @@ def build_index_cached(conv, cache):
     """One index per question, written in the EXACT pageindex_<sample_id>.json schema that
     pageindex.query / pi_rag read — so the stable framework is untouched. Re-summarizes only
     sessions not already in the content cache."""
-    INDEX_DIR.mkdir(exist_ok=True)
-    path = INDEX_DIR / f"pageindex_{conv['sample_id']}.json"
+    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    path = INDEX_DIR / f"{conv['sample_id']}.json"
     if path.exists():
         return json.loads(path.read_text())
     nodes = []

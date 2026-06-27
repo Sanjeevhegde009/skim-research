@@ -1,17 +1,16 @@
 """
 Run PageIndex-over-raw across ALL LoCoMo conversations with FULL per-question tracing.
 
-Everything is written under pageindex_runs/ and prefixed pageindex_. Indexes are cached at
-root as pageindex_<sample_id>.json and reused.
+Outputs go under results/locomo/<mode>/ where <mode> is "rag" (PI_RAG on) or "base".
+Indexes are cached under cache/pageindex/ and reused.
 
-Per conversation it writes:
-  pageindex_runs/pageindex_conv{N}_results.json   compact scored results
-  pageindex_runs/pageindex_conv{N}_trace.jsonl    FULL trace per question — navigator raw
-                                                  output, sessions opened, EXACT excerpts the
-                                                  answerer saw, gold evidence ids, judge verdict
-  pageindex_runs/pageindex_conv{N}.log            human-readable streaming log
+Per conversation it writes (under results/locomo/<mode>/):
+  conv{N}_results.json   compact scored results
+  conv{N}_trace.jsonl    FULL trace per question — navigator raw output, sessions opened,
+                         EXACT excerpts the answerer saw, gold evidence ids, judge verdict
+  conv{N}.log            human-readable streaming log
 And after every conversation (crash-safe):
-  pageindex_runs/pageindex_all_summary.txt / .json   cross-conv roll-up table
+  all_summary.txt / .json   cross-conv roll-up table
 
 Run:  set OPENAI_API_KEY=sk-...
       python run_all_pageindex.py            # all convs
@@ -25,12 +24,12 @@ from pathlib import Path
 
 from locomo_loader import load_conversations
 from evaluate import score_answer, token_f1
+import config
 import pageindex
 
-# When the RAG escalation is on, write to a SEPARATE dir so the committed base results in
-# pageindex_runs/ (the baseline the probe and comparisons read) are never overwritten.
-OUT = Path("pageindex_rag_runs" if pageindex.PI_RAG else "pageindex_runs")
-OUT.mkdir(exist_ok=True)
+# RAG and base runs write to separate subdirs so they never overwrite each other.
+OUT = config.RESULTS_DIR / "locomo" / ("rag" if pageindex.PI_RAG else "base")
+OUT.mkdir(parents=True, exist_ok=True)
 CATS = ["adversarial", "multi-hop", "open-domain", "single-hop", "temporal"]
 
 
@@ -56,8 +55,8 @@ def aggregate(results):
 
 
 def run_conv(cid, conv):
-    logp = OUT / f"pageindex_conv{cid}.log"
-    tracep = OUT / f"pageindex_conv{cid}_trace.jsonl"
+    logp = OUT / f"conv{cid}.log"
+    tracep = OUT / f"conv{cid}_trace.jsonl"
     with open(logp, "w", encoding="utf-8") as logf, open(tracep, "w", encoding="utf-8") as tracef:
         def log(s):
             print(s); logf.write(s + "\n"); logf.flush()
@@ -89,7 +88,7 @@ def run_conv(cid, conv):
                                      "excerpts": tr.get("excerpts", [])}, ensure_ascii=False) + "\n")
             log(f"  {i+1}/{len(conv['qa'])} [{cat[:4]}] s={sc['score']} f1={tf['token_f1']:.2f} "
                 f"sess={r.get('sessions')} | {question[:46]}")
-    (OUT / f"pageindex_conv{cid}_results.json").write_text(json.dumps(results, indent=1))
+    (OUT / f"conv{cid}_results.json").write_text(json.dumps(results, indent=1))
     return results
 
 
@@ -127,7 +126,7 @@ def _conv_block(cid, s):
 
 def write_summary(summary):
     # JSON (machine-readable, full per-conv aggregates)
-    (OUT / "pageindex_all_summary.json").write_text(json.dumps(
+    (OUT / "all_summary.json").write_text(json.dumps(
         {"generated": datetime.now().isoformat(), "results": summary}, indent=2),
         encoding="utf-8")
     # TXT: a FULL RESULTS block per conversation, then a cross-conv roll-up
@@ -156,8 +155,8 @@ def write_summary(summary):
             fv = [s["categories"][c]["token_f1"] for s in done if c in s["categories"]]
             if sv:
                 lines.append(f"  {c:<14}{sum(sv) / len(sv):.3f} / {sum(fv) / len(fv):.3f}")
-    (OUT / "pageindex_all_summary.txt").write_text("\n".join(lines), encoding="utf-8")
-    print(f"  [pageindex_all_summary.txt updated - {len(summary)} conv block(s)]")
+    (OUT / "all_summary.txt").write_text("\n".join(lines), encoding="utf-8")
+    print(f"  [all_summary.txt updated - {len(summary)} conv block(s)]")
 
 
 def main():
@@ -178,7 +177,7 @@ def main():
     # Pre-load any already-scored convs OUTSIDE this run's range, so even a partial run writes a
     # COMPLETE summary (every conv that has a results file). Convs in rng are (re)scored below.
     for cid in range(total):
-        p = OUT / f"pageindex_conv{cid}_results.json"
+        p = OUT / f"conv{cid}_results.json"
         if cid not in rng and p.exists():
             s = aggregate(json.loads(p.read_text()))
             s["speakers"] = convs[cid]["speakers"]
@@ -189,7 +188,7 @@ def main():
         s["speakers"] = convs[cid]["speakers"]
         summary[cid] = s
         write_summary(summary)   # crash-safe: rewrite after every conv
-    print(f"\nDone. Full traces in {OUT}/pageindex_conv*_trace.jsonl")
+    print(f"\nDone. Full traces in {OUT}/conv*_trace.jsonl")
 
 
 if __name__ == "__main__":

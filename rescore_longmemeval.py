@@ -28,7 +28,7 @@ from llm import _call_openai_compat, _api_call_with_retry
 from evaluate import _refused
 
 JUDGE_MODEL = os.environ.get("LME_JUDGE_MODEL", "gpt-4o")
-RESULTS = sys.argv[1] if len(sys.argv) > 1 else "longmemeval_results.json"
+RESULTS = sys.argv[1] if len(sys.argv) > 1 else str(config.RESULTS_DIR / "longmemeval" / "results.json")
 _stem = RESULTS[:-5] if RESULTS.endswith(".json") else RESULTS
 OUT = _stem + "_official.json"
 SUMMARY = _stem + "_official_summary.txt"
