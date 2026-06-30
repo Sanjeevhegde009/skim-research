@@ -80,7 +80,9 @@ def compile_index(conv, force=False):
         return json.loads(path.read_text())
     nodes = []
     for s in conv["sessions"]:
-        summary = _understand(f"{s['key']} ({s['date_time']})", pageindex._turns_block(s["turns"]))
+        turn_text = "\n".join(                                # feed dia_ids so citations are REAL
+            f"[{t.get('dia_id', '')}] {t['speaker']}: {t['text']}" for t in s["turns"])
+        summary = _understand(f"{s['key']} ({s['date_time']})", turn_text)
         nodes.append({
             "key": s["key"], "date": s["date_time"], "summary": summary, "relatives": [],
             "turns": [{"dia_id": t.get("dia_id", ""), "speaker": t["speaker"], "text": t["text"]}
