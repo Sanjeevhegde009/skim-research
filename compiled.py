@@ -105,50 +105,30 @@ _FACT_CACHE = {}
 
 
 def _fact_corpus(index):
+    """ALL compiled facts across every session — the FULL compiled understanding, fed as context
+    (no retrieval / no cosine; the model sees everything, so it can't miss scattered evidence)."""
     sid = index["sample_id"]
     if sid in _FACT_CACHE:
         return _FACT_CACHE[sid]
-    facts, texts = [], []
-    rel = {n["key"]: n.get("relatives", []) for n in index["nodes"]}
+    facts = []
     for n in index["nodes"]:
         for line in n["summary"].splitlines():
             line = line.strip()
             if len(line) > 3:
                 facts.append({"date": n["date"], "speaker": "", "text": line, "key": n["key"]})
-                texts.append(line)
-    vecs = [pi_rag._normalize(v) if v else None for v in (pi_rag._embed(texts) if texts else [])]
-    _FACT_CACHE[sid] = (facts, vecs, rel)
-    return _FACT_CACHE[sid]
-
-
-def _retrieve(subq, facts, vecs, rel, k, tau):
-    """Top-k compiled facts for a sub-question, expanded with facts from the top hit's RELATIVES."""
-    qv = pi_rag._embed([subq])
-    qn = pi_rag._normalize(qv[0]) if qv and qv[0] else None
-    if qn is None:
-        return []
-    sims = [(i, sum(a * b for a, b in zip(qn, vecs[i]))) for i in range(len(facts)) if vecs[i]]
-    sims.sort(key=lambda x: -x[1])
-    top = [(i, s) for i, s in sims if s >= tau][:k]
-    if not top:
-        return []
-    # one-hop relatives expansion: pull the best facts from the top hit's related sessions
-    related = set(rel.get(facts[top[0][0]]["key"], []))
-    extra = [(i, s) for i, s in sims if facts[i]["key"] in related and (i, s) not in top][:k]
-    chosen = {i for i, _ in top} | {i for i, _ in extra}
-    return [facts[i] for i in sorted(chosen, key=lambda i: -dict(sims).get(i, 0))][: 2 * k]
+    _FACT_CACHE[sid] = facts
+    return facts
 
 
 def query_compiled(index, question, trace=None):
     """Tier 1 = compiled facts (gated); Tier 2 = raw turns + RAG (gated). Same gate both tiers."""
     trace = trace if trace is not None else {}
-    facts, vecs, rel = _fact_corpus(index)
+    facts = _fact_corpus(index)                               # the FULL compiled understanding
 
     subs, has_premise = pi_rag._decompose(question, trace=trace)
     qa_pairs, tok = [], 0
-    for sq in subs:
-        hits = _retrieve(sq, facts, vecs, rel, pi_rag.TOPK, pi_rag.TAU)
-        a, tk = pi_rag._subanswer(sq, hits) if hits else ("Not stated", 0)
+    for sq in subs:                                           # answer each sub-q over ALL facts
+        a, tk = pi_rag._subanswer(sq, facts) if facts else ("Not stated", 0)
         tok += tk
         qa_pairs.append((sq, a))
 
@@ -162,8 +142,7 @@ def query_compiled(index, question, trace=None):
         trace["tier1_gate"] = "compose"
     trace["tier1_subanswers"] = qa_pairs
     trace["nav_tokens"], trace["ans_tokens"] = 0, tok
-    trace["sessions"] = sorted({h["key"] for sq in subs
-                                for h in _retrieve(sq, facts, vecs, rel, pi_rag.TOPK, pi_rag.TAU)})
+    trace["sessions"] = sorted({f["key"] for f in facts})     # full context: every session present
 
     # Tier 2: raw turns + RAG fallback on a Tier-1 refusal (identical gate inside pi_rag.answer).
     if pageindex._is_refusal(ans):
