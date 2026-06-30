@@ -61,6 +61,9 @@ def _turns_block(turns, dated=False):
 def build_index(conv, force=False):
     """One LLM-summarized node per session. Cached; ~one call per session.
     Returns {'sample_id', 'nodes': [{key,date,summary,turns}]}."""
+    if os.environ.get("COMPILED", "").strip().lower() in ("1", "true", "yes"):
+        import compiled                                        # branch: HLMA-compiled index
+        return compiled.compile_index(conv, force)
     config.INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = config.INDEX_CACHE_DIR / f"{conv['sample_id']}.json"
     if path.exists() and not force:
@@ -193,6 +196,9 @@ def query(index, question):
     With PI_RAG, a base REFUSAL hands the question to pi_rag (decompose → semantic-retrieve raw
     turns → strict synthesis); its answer is adopted only if it recovers one, else the refusal
     stands. Stable base path is byte-identical when PI_RAG is off. Trace records every step."""
+    if os.environ.get("COMPILED", "").strip().lower() in ("1", "true", "yes"):
+        import compiled                                        # branch: compiled two-tier gated query
+        return compiled.query_compiled(index, question)
     nodes = index["nodes"]
     trace = {}
     # Aggregation questions need BROAD navigation (scattered evidence) AND reasoning over the
