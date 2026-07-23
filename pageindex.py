@@ -32,6 +32,21 @@ PI_REASON = os.environ.get("PI_REASON", "").lower() in ("1", "true", "yes")
 # retrieve raw turns per sub-question, strict-synthesize (answer or refuse). Toggle: PI_RAG=1
 PI_RAG = os.environ.get("PI_RAG", "").strip().lower() in ("1", "true", "yes")
 
+# Force RAG escalation on count/compare/aggregate questions EVEN WHEN the base did not refuse
+# (default off). The base path navigates a partial view (<=3 sessions) and systematically
+# UNDERCOUNTS aggregations, answering confidently instead of refusing — so RAG never fires. When on,
+# such questions are handed to RAG's global (whole-haystack) retrieval and its non-refusal answer is
+# PREFERRED over the base's. Targets the largest error bucket. Toggle: PI_RAG_FORCE_AGG=1
+PI_RAG_FORCE_AGG = os.environ.get("PI_RAG_FORCE_AGG", "").strip().lower() in ("1", "true", "yes")
+
+# Grounding-verify gate (default off). The refusal gate only escalates when the reader ADMITS it
+# can't answer; it is blind to CONFIDENT-WRONG answers (~half our errors — non-refusal, non-
+# hallucination, just wrong). When on, a non-refusal base answer is checked against the evidence it
+# was drawn from; if UNSUPPORTED (a fact not present, wrong date/count arithmetic, or a superseded
+# value on a 'most recent' question) it is escalated like a refusal. One extra cheap reader call,
+# only on answers that would not otherwise escalate. Toggle: PI_RAG_VERIFY=1
+PI_RAG_VERIFY = os.environ.get("PI_RAG_VERIFY", "").strip().lower() in ("1", "true", "yes")
+
 # Broad navigation as its OWN flag (default off). The best config runs precision nav
 # (NAV_MAX_SESSIONS=3), so a count scattered over >=4 sessions is an undercount BY CONSTRUCTION —
 # the base path cannot open enough sessions (verified: 'health devices' gold=4, cap=3, answered 3
@@ -85,7 +100,7 @@ def needs_reasoning(question: str) -> bool:
     return bool(_REASON_RE.search(question))
 
 
-# Aggregate/count/compare trigger for BROAD NAVIGATION. Broader than _REASON_RE (adds total/
+# Aggregate/count/compare trigger for FORCED escalation. Broader than _REASON_RE (adds total/
 # average/combined and comparatives) and kept SEPARATE so it never perturbs the PI_REASON base path.
 _AGG_RE = re.compile(
     r'\bhow many\b|\bhow much\b|\bhow often\b|\bhow frequently\b|\bhow many times\b'      # count
@@ -97,8 +112,8 @@ _AGG_RE = re.compile(
 
 
 def is_aggregate(question: str) -> bool:
-    """True for count / aggregate / compare questions — the ones whose evidence is scattered, so
-    PI_NAV_BROAD navigates them wide (recall over precision)."""
+    """True for count / aggregate / compare questions — the ones the partial-view base path
+    undercounts and should hand to RAG's global retrieval when PI_RAG_FORCE_AGG is on."""
     return bool(_AGG_RE.search(question or ""))
 
 
@@ -363,6 +378,34 @@ def _answer_datemath(question, turns, qdate, trace=None):
     return out2.strip(), tok
 
 
+def _is_grounded(question, answer, turns, trace=None):
+    """Cheap grounding check: is ANSWER actually supported by the EVIDENCE it was drawn from?
+    A genuine verification (fact present, arithmetic/date-math recomputed, recency respected) — not a
+    surface match. Returns True if supported; defaults True on an ambiguous verdict (fail-safe: don't
+    over-escalate a possibly-correct answer)."""
+    body = _turns_block(turns, dated=True)
+    sys = (
+        "You VERIFY a proposed answer against conversation evidence. Decide whether the ANSWER is "
+        "fully and correctly supported by the EXCERPTS.\n"
+        "Check ALL of:\n"
+        "- Every fact in the answer actually appears in the excerpts (not guessed from general "
+        "knowledge).\n"
+        "- Any counting, arithmetic, or DATE math is correct given the excerpts — recompute it "
+        "yourself before judging.\n"
+        "- If the question asks for the CURRENT / MOST RECENT / LATEST value, the answer reflects the "
+        "latest-dated excerpt, not a superseded earlier one.\n"
+        "Reply on ONE line, EXACTLY 'SUPPORTED' if it holds, otherwise 'UNSUPPORTED: <brief reason>'. "
+        "Be strict, but do not demand more than the question actually asks.")
+    usr = f"QUESTION: {question}\n\nPROPOSED ANSWER: {answer}\n\nEXCERPTS:\n{body}\n\nVerdict:"
+    out = query_call([{"role": "system", "content": sys},
+                      {"role": "user", "content": usr}], temperature=0.0)
+    low = out.strip().lower()
+    if trace is not None:
+        trace["verify_verdict"] = out.strip()[:140]
+        trace["verify_tokens"] = estimate_tokens(sys) + estimate_tokens(usr) + estimate_tokens(out)
+    return not (low.startswith("unsupported") or "unsupported" in low or "not supported" in low)
+
+
 def query(index, question, question_date=None):
     """Navigate → read chosen sessions' raw turns → answer. Refuse if nav finds nothing.
 
@@ -395,12 +438,25 @@ def query(index, question, question_date=None):
     else:
         turns, ans = [], "This information is not available."
 
-    # RAG escalation on the refusal residue (only fires when PI_RAG is set and the base refused).
-    # base_answer is kept in the trace for per-question A/B analysis.
-    if PI_RAG and _is_refusal(ans):
+    # RAG escalation. Normally fires only on a base REFUSAL (recover the residue). With
+    # PI_RAG_FORCE_AGG it ALSO fires on count/aggregate/compare questions the base answered
+    # confidently — because the base saw a partial view and likely undercounted — and PREFERS RAG's
+    # non-refusal answer (global count supersedes the partial one). base_answer is kept for analysis.
+    base_ans = ans
+    forced = PI_RAG and PI_RAG_FORCE_AGG and is_aggregate(question) and not _is_refusal(ans)
+    # Grounding verify: a CONFIDENT (non-refusal) base answer that is not actually supported by the
+    # evidence it was drawn from is treated like a refusal, so escalation also fires on confident-
+    # WRONG answers. Only run when nothing else already escalates (saves the extra call).
+    verify_fail = False
+    if PI_RAG and PI_RAG_VERIFY and keys and not _is_refusal(ans) and not forced:
+        verify_fail = not _is_grounded(question, ans, turns, trace=trace)
+        trace["verify_fail"] = verify_fail
+    if PI_RAG and (_is_refusal(ans) or forced or verify_fail):
         import pi_rag
         trace["rag_fired"] = True
-        trace["base_answer"] = ans
+        trace["rag_forced"] = forced
+        trace["rag_verify"] = verify_fail
+        trace["base_answer"] = base_ans
         rag = pi_rag.answer(question, index, trace=trace)
         if rag and not _is_refusal(rag["answer"]):
             ans = rag["answer"]

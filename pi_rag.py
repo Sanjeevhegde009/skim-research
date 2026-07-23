@@ -48,10 +48,29 @@ PI_RAG_HYBRID = os.environ.get("PI_RAG_HYBRID", "").strip().lower() in ("1", "tr
 # if the basis isn't there). General English markers, not dataset-specific. Toggle: PI_RAG_INFER=1
 PI_RAG_INFER = os.environ.get("PI_RAG_INFER", "").strip().lower() in ("1", "true", "yes")
 _INFER_RE = re.compile(r'\b(would|likely|might|probably)\b', re.IGNORECASE)
+# HyDE-lite (default off): retrieve with an answer-SHAPED query. The evidence turn is written as a
+# statement ("I upgraded to 500 Mbps"), not a question, so a DECLARATIVE query embeds nearer it than
+# the interrogative does. Strips only the question frame — no LLM, no invented specifics (the user's
+# private answer is unguessable, so a fabricated value would be noise). ONLY the cosine embedding
+# vector changes; every sub-question is still asked, still BM25'd, and still gates. Toggle: PI_RAG_HYDE=1
+PI_RAG_HYDE = os.environ.get("PI_RAG_HYDE", "").strip().lower() in ("1", "true", "yes")
+_Q_LEAD = re.compile(
+    r'^\s*(?:is there any evidence(?:\s+that)?|how many|how much|how long|how old|how far|how often|'
+    r'how|what time|what|which|whose|whom|who|where|when|why|did|does|do|was|were|is|are|has|have|'
+    r'had|will|would|could|should|can)\b[\s,:]*', re.IGNORECASE)
 
 
 def _is_inference(question):
     return bool(_INFER_RE.search(question or ""))
+
+
+def _declarify(q):
+    """Answer-shape a sub-question for the EMBEDDING query ONLY (HyDE-lite): drop the interrogative
+    frame so 'What speed is my plan?' -> 'speed is my plan', which lands nearer the declarative
+    evidence turn. Falls back to the original if stripping leaves too little."""
+    s = (q or "").strip().rstrip("?").strip()
+    d = _Q_LEAD.sub("", s, count=1).strip()
+    return d if len(d) >= 3 else s
 _REFUSAL = "this information is not available"
 
 
@@ -299,7 +318,12 @@ def answer(question, index, trace=None):
     subs, has_premise = _decompose(question, trace=trace)
     if not subs:
         return None
-    subq_vecs = _embed(subs)
+    embed_qs = [_declarify(s) for s in subs] if PI_RAG_HYDE else subs
+    if PI_RAG_HYDE:                                            # log the declarative embedding queries
+        print("    [HyDE] " + " | ".join(f"{o!r}->{d!r}" for o, d in zip(subs, embed_qs)))
+        if trace is not None:
+            trace["rag_embed_queries"] = list(zip(subs, embed_qs))
+    subq_vecs = _embed(embed_qs)
     bm25 = _bm25_for(index["sample_id"], turns) if PI_RAG_HYBRID else None
     packs, picked, ev_scores, best_raw = [], {}, {}, 0.0
     for sq, qv in zip(subs, subq_vecs):
