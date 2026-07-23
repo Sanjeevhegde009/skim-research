@@ -77,6 +77,18 @@ PI_DATEMATH = os.environ.get("PI_DATEMATH", "").strip().lower() in ("1", "true",
 # questions also navigate BROAD (the value history is scattered by nature). Toggle: PI_RECENCY=1
 PI_RECENCY = os.environ.get("PI_RECENCY", "").strip().lower() in ("1", "true", "yes")
 
+# Evidence-union (default off) — the deconfounded test of "RAG for multi-session". force_agg's
+# negative (fired 18, fixed 1) conflated two failure modes: retrieval-miss (disguised instances,
+# unfixable at query time) and COMPOSE-miss (evidence retrieved, arithmetic fumbled — eggs $30).
+# This flag separates evidence GATHERING from answer COMPUTATION: for every compute-layer question
+# (aggregate / datemath / recency), evidence = nav-opened turns UNIONED with the global retrieval
+# pass, and the answering end is the matching compute layer (scratchpad / date table / value
+# history) — never pi_rag's compose. Also: when nav returns NONE for these questions, retrieval-only
+# evidence still feeds the compute layer instead of refusing outright (the 21 temporal nav-miss
+# bucket). Prediction on record: recovers compose-failure + findable-evidence residue (~+2-4 on the
+# 500), does NOT move disguised counts. Toggle: PI_EVUNION=1
+PI_EVUNION = os.environ.get("PI_EVUNION", "").strip().lower() in ("1", "true", "yes")
+
 _RECENCY_RE = re.compile(
     r'\brecent(?:ly)?\b|\bcurrently\b|\bcurrent\b|\blatest\b|\bnewest\b'        # explicit latest
     r'|\bstill\b|\banymore\b|\bthese days\b|\bnowadays\b|\busually\b'           # present state/habit
@@ -104,10 +116,24 @@ _DATEMATH_RE = re.compile(
     re.IGNORECASE)
 
 
+# Precision guard: "how many <THINGS> ... since/ago" is a COUNT question that merely anchors its
+# range in time — datemath would extract dates instead of counting items (measured regressions:
+# '23 pieces of writing' -> '27'). Counting THINGS is the scratchpad/recency paths' job; datemath
+# keeps only "how many <TIME-UNITS>".
+_COUNT_THINGS_RE = re.compile(
+    r'\bhow (?:many|much)\b(?!\s+(?:days?|weeks?|months?|years?|time\b|longer|older|younger|'
+    r'faster|slower|sooner|later|earlier))', re.IGNORECASE)
+_COUNT_TIME_RE = re.compile(r'\bhow many (?:days?|weeks?|months?|years?)\b', re.IGNORECASE)
+
+
 def is_temporal_math(question: str) -> bool:
     """True for questions whose answer is a date computation (duration, elapsed time, age gap,
-    chronological order) — the class the date-math layer handles."""
-    return bool(_DATEMATH_RE.search(question or ""))
+    chronological order) — the class the date-math layer handles. Count-of-things questions are
+    excluded even when they contain a time anchor ('...since three weeks ago')."""
+    q = question or ""
+    if _COUNT_THINGS_RE.search(q) and not _COUNT_TIME_RE.search(q):
+        return False
+    return bool(_DATEMATH_RE.search(q))
 
 _REASON_RE = re.compile(
     r'\bhow many\b|\bhow often\b|\bhow frequently\b'                       # counting
@@ -423,12 +449,13 @@ RECENCY_TOPK = 12    # deeper than RAG's answering k: gathering a value HISTORY 
                      # and extraction filters non-states, so noise in the candidate turns is cheap
 
 
-def _recency_retrieve(question, index, nav_turns, trace=None):
-    """Augment the recency layer's evidence with the RAG retrieval pass (cosine+BM25 over ALL raw
-    turns). Value updates are usually lexically findable ('Rachel ... moved ... suburbs') even when
-    their session's nav summary ERASED them — retrieval reads turns, not summaries, so it reaches
-    what navigation structurally cannot. Returns (merged_turns, n_added); every turn carries its
-    session date, which the extraction step needs. Falls back to nav_turns alone on any failure."""
+def _recency_retrieve(question, index, nav_turns, trace=None, key="recency"):
+    """Augment a compute-layer's evidence with the RAG retrieval pass (cosine+BM25 over ALL raw
+    turns). Named evidence ('Rachel ... moved ... suburbs') is lexically findable even when its
+    session's nav summary ERASED it — retrieval reads turns, not summaries, so it reaches what
+    navigation structurally cannot. Returns (merged_turns, n_added); every turn carries its
+    session date, which the extraction steps need. Falls back to nav_turns alone on any failure.
+    `key` names the trace field ('recency'|'union') so each caller's adds are tracked separately."""
     import pi_rag
     try:
         turns, vecs = pi_rag.turn_embeddings(index)
@@ -457,7 +484,7 @@ def _recency_retrieve(question, index, nav_turns, trace=None):
             seen.add(t.get("dia_id"))
             added += 1
     if trace is not None:
-        trace["recency_retrieved"] = added
+        trace[f"{key}_retrieved"] = added
     return merged, added
 
 
@@ -584,12 +611,20 @@ def query(index, question, question_date=None):
     # lives in a different session). Datemath keeps precedence — duration questions need arithmetic
     # over the history, not a pick from it.
     recency_q = PI_RECENCY and is_recency(question) and not datemath_q
-    broad = (PI_REASON and needs_reasoning(question)) or \
-            (PI_NAV_BROAD and (needs_reasoning(question) or is_aggregate(question))) or \
-            datemath_q or recency_q
+    # Aggregate/count questions (the broad-nav class that is neither datemath nor recency): under
+    # PI_EVUNION their evidence is also retrieval-augmented, answered by the scratchpad — never
+    # pi_rag's compose.
+    agg_q = PI_NAV_BROAD and (needs_reasoning(question) or is_aggregate(question)) \
+        and not datemath_q and not recency_q
+    broad = (PI_REASON and needs_reasoning(question)) or agg_q or datemath_q or recency_q
     keys = _navigate(question, nodes, broad=broad, recency=recency_q, trace=trace)
-    if keys:
-        turns = _collect_turns(nodes, keys)
+    turns = _collect_turns(nodes, keys) if keys else []
+    # Evidence union: gather ONCE for every compute-layer question — including when nav returned
+    # NONE, so retrieval-only evidence still reaches the compute layer instead of refusing outright.
+    union_q = PI_EVUNION and PI_RAG and (datemath_q or recency_q or agg_q)
+    if union_q:
+        turns, _ = _recency_retrieve(question, index, turns, trace=trace, key="union")
+    if turns:
         ans, dm_tok = None, 0
         if datemath_q:                                    # extract dates -> compute in code -> copy
             qd = _parse_qdate(question_date)
@@ -597,9 +632,9 @@ def query(index, question, question_date=None):
         elif recency_q:                                   # extract value history -> pick latest
             qd = _parse_qdate(question_date)
             ev_turns = turns
-            if PI_RAG:                                    # RAG retrieval augmentation: reach value
-                ev_turns, _ = _recency_retrieve(          # updates whose sessions nav can't see
-                    question, index, turns, trace=trace)  # (summary erased them; turns are visible)
+            if PI_RAG and not union_q:                    # v2 augmentation (skip if union already
+                ev_turns, _ = _recency_retrieve(          # merged the retrieval hits above)
+                    question, index, turns, trace=trace)
             ans, dm_tok = _answer_recency(question, ev_turns, qd, trace=trace)
         if ans is None:                                   # no trigger, or extraction found nothing
             ans = _answer(question, turns, trace=trace)   # (_answer assigns ans_tokens)
