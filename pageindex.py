@@ -14,6 +14,7 @@ Reuses llm.py's plumbing (compiler_call / query_call) + config.
 import json
 import os
 import re
+from datetime import date as _date
 from pathlib import Path
 
 import config
@@ -30,6 +31,40 @@ PI_REASON = os.environ.get("PI_REASON", "").lower() in ("1", "true", "yes")
 # navigate->answer refuses, hand the question to pi_rag: decompose into 3-5 sub-questions, semantic-
 # retrieve raw turns per sub-question, strict-synthesize (answer or refuse). Toggle: PI_RAG=1
 PI_RAG = os.environ.get("PI_RAG", "").strip().lower() in ("1", "true", "yes")
+
+# Broad navigation as its OWN flag (default off). The best config runs precision nav
+# (NAV_MAX_SESSIONS=3), so a count scattered over >=4 sessions is an undercount BY CONSTRUCTION —
+# the base path cannot open enough sessions (verified: 'health devices' gold=4, cap=3, answered 3
+# with the 4th sitting in the ToC). Broad nav (cap 8) exists but is welded to PI_REASON, which ALSO
+# swaps the answer prompt — two variables. This flag enables broad nav ALONE on count/aggregate
+# questions; the answer step stays byte-identical. Toggle: PI_NAV_BROAD=1
+PI_NAV_BROAD = os.environ.get("PI_NAV_BROAD", "").strip().lower() in ("1", "true", "yes")
+
+# Deterministic date-math layer (default off). Temporal questions fail because the reader EYEBALLS
+# date arithmetic (proven: even gpt-4o answered a 2-event ordering backwards) and because the
+# pipeline never told it WHEN the question was asked (question_date was dropped by the runner, so
+# every "how many months ago...?" had no reference point). When on, temporal-computation questions
+# take a 3-step path: (1) LLM EXTRACTS the relevant events with ABSOLUTE dates (resolving relative
+# wording against each turn's date tag — extraction, which LLMs do well); (2) PYTHON computes the
+# timeline, pairwise differences, and distances from the question date — exactly; (3) the LLM answers
+# by COPYING the computed number, forbidden from doing its own arithmetic. Falls back to the normal
+# answer path when no dated events can be extracted. Toggle: PI_DATEMATH=1
+PI_DATEMATH = os.environ.get("PI_DATEMATH", "").strip().lower() in ("1", "true", "yes")
+
+_DATEMATH_RE = re.compile(
+    r'\bhow long\b|\bhow old\b'                                             # duration / age
+    r'|\bhow many (?:days|weeks|months|years)\b'                            # counted spans
+    r'|\b(?:days|weeks|months|years)\s+(?:ago|passed|apart|since|before|after|later)\b'
+    r'|\bago\b|\bhow much (?:older|younger)\b'                              # elapsed / age gap
+    r'|\border of\b|\bearliest\b|\blatest\b|\bchronolog'                    # chronological ordering
+    r'|\b(?:which|who|what)\b[^?]{0,60}\bfirst\b|\bhappened first\b',       # which-came-first
+    re.IGNORECASE)
+
+
+def is_temporal_math(question: str) -> bool:
+    """True for questions whose answer is a date computation (duration, elapsed time, age gap,
+    chronological order) — the class the date-math layer handles."""
+    return bool(_DATEMATH_RE.search(question or ""))
 
 _REASON_RE = re.compile(
     r'\bhow many\b|\bhow often\b|\bhow frequently\b'                       # counting
@@ -48,6 +83,23 @@ def needs_reasoning(question: str) -> bool:
     """True for questions that require serial computation (count, compare, duration, latest
     state, intersection) — language-general markers, not dataset-specific."""
     return bool(_REASON_RE.search(question))
+
+
+# Aggregate/count/compare trigger for BROAD NAVIGATION. Broader than _REASON_RE (adds total/
+# average/combined and comparatives) and kept SEPARATE so it never perturbs the PI_REASON base path.
+_AGG_RE = re.compile(
+    r'\bhow many\b|\bhow much\b|\bhow often\b|\bhow frequently\b|\bhow many times\b'      # count
+    r'|\btotal\b|\bin total\b|\baltogether\b|\bcombined\b|\baverage\b|\bsum\b|\bcount\b'  # aggregate
+    r'|\bmore\b|\bfewer\b|\bless\b|\bolder\b|\byounger\b|\blonger\b|\bshorter\b|'
+    r'\bfaster\b|\bslower\b|\bbigger\b|\bsmaller\b|\bgreater\b|\bhigher\b|\blower\b'       # compare
+    r'|\bcompare\b|\bdifference\b|\bin common\b',
+    re.IGNORECASE)
+
+
+def is_aggregate(question: str) -> bool:
+    """True for count / aggregate / compare questions — the ones whose evidence is scattered, so
+    PI_NAV_BROAD navigates them wide (recall over precision)."""
+    return bool(_AGG_RE.search(question or ""))
 
 
 def _turns_block(turns, dated=False):
@@ -190,7 +242,128 @@ def _collect_turns(nodes, keys):
     return turns
 
 
-def query(index, question):
+def _parse_qdate(s):
+    """Parse a question/session timestamp like '2023/05/30 (Tue) 23:38' to a date, else None."""
+    m = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', s or "")
+    try:
+        return _date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+    except ValueError:
+        return None
+
+
+def _cal_months(a, b):
+    """Whole calendar months from a to b (a <= b)."""
+    return (b.year - a.year) * 12 + (b.month - a.month) - (1 if b.day < a.day else 0)
+
+
+def _fmt_span(a, b):
+    """Exact span from a to b in every unit the question might ask for."""
+    dd = (b - a).days
+    w, r = divmod(dd, 7)
+    parts = [f"{dd} days", f"{dd + 1} days counting both end days",
+             f"{w} weeks" + (f" {r} days" if r else "")]
+    if dd >= 28:
+        parts.append(f"{_cal_months(a, b)} calendar months")
+    if dd >= 365:
+        parts.append(f"~{dd / 365.25:.1f} years")
+    return " = ".join(parts[:2]) + "; " + "; ".join(parts[2:])
+
+
+def _compute_block(events, qdate):
+    """Deterministic timeline + differences over the extracted events. events = [(desc, date,
+    approx)]. Every number here is computed in Python — the final LLM call only copies them."""
+    evs = sorted(events, key=lambda e: e[1])
+    L = []
+    if qdate:
+        L.append(f"TODAY (the date the question is asked): {qdate.isoformat()}")
+    L.append("TIMELINE (earliest -> latest; ~ = day approximate):")
+    for i, (desc, dt, ap) in enumerate(evs, 1):
+        rel = ""
+        if qdate:
+            dd = (qdate - dt).days
+            side = "before today" if dd >= 0 else "after today"
+            rel = (f"   [{abs(dd)} days {side}; {abs(dd)//7} weeks; "
+                   f"{_cal_months(*sorted((dt, qdate)))} calendar months]")
+        L.append(f"  E{i}. {dt.isoformat()}{'~' if ap else ''} — {desc}{rel}")
+    if len(evs) > 1:
+        L.append("DIFFERENCES (exact, precomputed — copy, never recompute):")
+        idx = range(len(evs))
+        pairs = ([(i, j) for i in idx for j in idx if i < j] if len(evs) <= 5
+                 else [(i, i + 1) for i in idx[:-1]])
+        for i, j in pairs:
+            L.append(f"  E{i+1} -> E{j+1}: {_fmt_span(evs[i][1], evs[j][1])}")
+    return "\n".join(L)
+
+
+def _answer_datemath(question, turns, qdate, trace=None):
+    """3-step temporal answer: LLM extracts dated events -> Python computes -> LLM copies the
+    computed number. Returns None (caller falls back to the normal path) if extraction finds no
+    usable dated events."""
+    body = _turns_block(turns, dated=True)
+    sys1 = (
+        "You extract DATED EVENTS from conversation excerpts so that exact date arithmetic can be "
+        "done in code. List every event RELEVANT to the question, one per line, EXACTLY:\n"
+        "EVENT: <short description> || DATE: <YYYY-MM-DD>\n"
+        "- Each excerpt is tagged [date] = when it was SPOKEN. Resolve relative wording against "
+        "that tag ('yesterday' on a turn tagged 2023/05/30 -> 2023-05-29; 'three weeks ago' -> "
+        "that date minus 21 days; 'last Saturday' -> the Saturday before it).\n"
+        "- Date each event by WHEN THE EVENT HAPPENED, never by when it was mentioned (a trip "
+        "recalled today still gets the trip's own date).\n"
+        "- If only the month is known, write DATE: <YYYY-MM>; only the year, DATE: <YYYY>. If "
+        "undatable, DATE: unknown.\n"
+        "- Include the event the question anchors on AND every event it asks about; nothing else.\n"
+        "- Output ONLY EVENT lines, no commentary.")
+    usr1 = f"QUESTION (for relevance only): {question}\n\nEXCERPTS:\n{body}\n\nEVENT lines:"
+    out1 = query_call([{"role": "system", "content": sys1},
+                       {"role": "user", "content": usr1}], temperature=0.0)
+    tok = estimate_tokens(sys1) + estimate_tokens(usr1) + estimate_tokens(out1)
+
+    events = []
+    for ln in out1.splitlines():
+        m = re.match(r'\s*EVENT:\s*(.+?)\s*\|\|\s*DATE:\s*(\S+)', ln)
+        if not m:
+            continue
+        desc, ds = m.group(1), m.group(2).strip().rstrip('.')
+        md = re.match(r'(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$', ds)
+        if not md:
+            continue                                        # 'unknown' or malformed -> skip
+        try:                                                # bare YYYY -> mid-year approx; never DROP
+            events.append((desc, _date(int(md.group(1)), int(md.group(2) or 7),
+                                       int(md.group(3) or 15)),
+                           md.group(3) is None))            # a partially-dated event (losing it broke
+        except ValueError:                                  # 'which trip first': Thailand DATE: 2022
+            continue                                        # was discarded -> only Europe remained)
+    if trace is not None:
+        trace["datemath_events"] = out1.strip()
+    if not events:
+        if trace is not None:
+            trace["datemath"] = "no_events"
+        return None, tok                                    # fall back to the normal answer path
+
+    computed = _compute_block(events, qdate)
+    if trace is not None:
+        trace["datemath"] = "computed"
+        trace["datemath_table"] = computed
+    sys2 = (
+        "Answer the question using ONLY the events and the COMPUTED table below. Every difference "
+        "and duration in the table was computed EXACTLY in code.\n"
+        "- COPY the number that answers the question; NEVER do your own date arithmetic.\n"
+        "- Match the unit the question asks for (days / weeks / months / years); for 'how many X "
+        "ago' or 'how long since', use the distance-from-TODAY values.\n"
+        "- For order/which-first questions, give the events IN TIMELINE ORDER — always by their "
+        "descriptions (names), NEVER by the E-numbers (E1/E2 mean nothing to the asker).\n"
+        "- Only if NO event in the table is relevant to the question, answer exactly: This "
+        "information is not available. Otherwise answer from the events you have — the evidence "
+        "was already vetted upstream; do not second-guess the question's wording.\n"
+        "Output ONLY the short final answer.")
+    usr2 = f"QUESTION: {question}\n\n{computed}\n\nAnswer:"
+    out2 = query_call([{"role": "system", "content": sys2},
+                       {"role": "user", "content": usr2}], temperature=0.0)
+    tok += estimate_tokens(sys2) + estimate_tokens(usr2) + estimate_tokens(out2)
+    return out2.strip(), tok
+
+
+def query(index, question, question_date=None):
     """Navigate → read chosen sessions' raw turns → answer. Refuse if nav finds nothing.
 
     With PI_RAG, a base REFUSAL hands the question to pi_rag (decompose → semantic-retrieve raw
@@ -203,18 +376,31 @@ def query(index, question):
     trace = {}
     # Aggregation questions need BROAD navigation (scattered evidence) AND reasoning over the
     # complete set — coupled. Gated by PI_REASON, so the base path is precision-navigate only.
-    broad = PI_REASON and needs_reasoning(question)
+    # PI_NAV_BROAD decouples them: broad nav alone (wider trigger: needs_reasoning OR is_aggregate,
+    # so total/average questions qualify too), answer step unchanged. Date-math questions also
+    # navigate broad — an ordering/duration needs the events from EVERY involved session.
+    datemath_q = PI_DATEMATH and is_temporal_math(question)
+    broad = (PI_REASON and needs_reasoning(question)) or \
+            (PI_NAV_BROAD and (needs_reasoning(question) or is_aggregate(question))) or datemath_q
     keys = _navigate(question, nodes, broad=broad, trace=trace)
     if keys:
         turns = _collect_turns(nodes, keys)
-        ans = _answer(question, turns, trace=trace)
+        ans, dm_tok = None, 0
+        if datemath_q:                                    # extract dates -> compute in code -> copy
+            qd = _parse_qdate(question_date)
+            ans, dm_tok = _answer_datemath(question, turns, qd, trace=trace)
+        if ans is None:                                   # not a datemath q, or no dated events
+            ans = _answer(question, turns, trace=trace)   # (_answer assigns ans_tokens)
+        trace["ans_tokens"] = trace.get("ans_tokens", 0) + dm_tok   # add datemath cost (0 if unused)
     else:
         turns, ans = [], "This information is not available."
 
     # RAG escalation on the refusal residue (only fires when PI_RAG is set and the base refused).
+    # base_answer is kept in the trace for per-question A/B analysis.
     if PI_RAG and _is_refusal(ans):
         import pi_rag
         trace["rag_fired"] = True
+        trace["base_answer"] = ans
         rag = pi_rag.answer(question, index, trace=trace)
         if rag and not _is_refusal(rag["answer"]):
             ans = rag["answer"]

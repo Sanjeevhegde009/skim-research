@@ -55,6 +55,12 @@ config.QUERY_MODEL = READER
 config.QUERY_PROVIDER = PROVIDER
 OLLAMA_NUM_CTX = int(os.environ.get("LME_OLLAMA_NUM_CTX", "8192"))
 _tag = "" if READER == DEFAULT_READER else "_" + re.sub(r"[^a-z0-9]+", "", READER.lower())
+if pageindex.PI_NAV_BROAD:                            # broad-nav A/B writes its OWN results/summary
+    _tag += "_navbroad"                               # so the validated baseline files stay intact
+if pageindex.PI_REASON:                               # reasoning answer-step A/B: own files too
+    _tag += "_reason"
+if pageindex.PI_DATEMATH:                             # deterministic date-math A/B: own files too
+    _tag += "_datemath"
 
 config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _LME_RESULTS = config.RESULTS_DIR / "longmemeval"
@@ -184,7 +190,9 @@ def main():
 
     # ── header + best-config guard ───────────────────────────────────────────────
     flags = {"PI_RAG": pageindex.PI_RAG, "HYBRID": pi_rag.PI_RAG_HYBRID,
-             "INFER": pi_rag.PI_RAG_INFER, "GATE": pi_rag.PI_RAG_GATE}
+             "INFER": pi_rag.PI_RAG_INFER, "GATE": pi_rag.PI_RAG_GATE,
+             "NAV_BROAD": pageindex.PI_NAV_BROAD, "REASON": pageindex.PI_REASON,
+             "DATEMATH": pageindex.PI_DATEMATH}
     rd = f"{config.QUERY_PROVIDER}/{READER}" + (
         f"   [overridden from {DEFAULT_READER}]" if READER != DEFAULT_READER else "")
     print("=" * 70)
@@ -194,7 +202,8 @@ def main():
         print(f"  ollama num_ctx: {OLLAMA_NUM_CTX}  (raise via LME_OLLAMA_NUM_CTX if nav looks truncated)")
     print(f"  index/judge:    {config.COMPILER_PROVIDER}/{config.COMPILER_MODEL}")
     print(f"  PI_RAG={flags['PI_RAG']}  hybrid={flags['HYBRID']}  infer={flags['INFER']}  "
-          f"gate={flags['GATE']}  tau={pi_rag.TAU}")
+          f"gate={flags['GATE']}  nav_broad={flags['NAV_BROAD']}  reason={flags['REASON']}  "
+          f"datemath={flags['DATEMATH']}  tau={pi_rag.TAU}")
     print(f"  outputs: {RESULTS_PATH}  +  {SUMMARY_PATH}")
     print("=" * 70)
     missing = [k for k in ("PI_RAG", "HYBRID", "INFER") if not flags[k]]
@@ -205,6 +214,11 @@ def main():
         sys.exit(1)
 
     convs = longmemeval_loader.load(limit=limit)
+    only_type = os.environ.get("LME_ONLY_TYPE", "").strip()   # comma-sep type(s) -> run just those
+    if only_type:
+        types = {t.strip() for t in only_type.split(",") if t.strip()}
+        convs = [c for c in convs if c["qa"][0]["category_name"] in types]
+        print(f"\n[filter] LME_ONLY_TYPE={sorted(types)} -> {len(convs)} instances (of the stratified {limit})")
     comp = Counter(c["qa"][0]["category_name"] for c in convs)
     n_abs = sum(c["qa"][0]["abstention"] for c in convs)
     kind = f"stratified subset of {limit}" if (limit and limit < 500) else "full file"
@@ -238,7 +252,7 @@ def main():
         is_abs = (q["answer"] == "NOT_ANSWERABLE")
         idx = build_index_cached(conv, cache)
         _Q["in"] = 0; _Q["out"] = 0; _Q["calls"] = 0      # meter THIS question's reader usage
-        r = pageindex.query(idx, q["question"])
+        r = pageindex.query(idx, q["question"], question_date=conv.get("question_date", ""))
         qin, qout, qcalls = _Q["in"], _Q["out"], _Q["calls"]
         ans = r["answer"]
         sc = score_answer(q["question"], q["answer"], ans, q["category_name"])
@@ -259,6 +273,11 @@ def main():
             "sessions": r["sessions"],
             "n_sessions": len(idx["nodes"]),
             "rag_fired": tr.get("rag_fired", False),
+            "nav_broad": tr.get("nav_broad", False),
+            "datemath": tr.get("datemath", ""),
+            "datemath_events": tr.get("datemath_events", ""),
+            "datemath_table": tr.get("datemath_table", ""),
+            "base_answer": tr.get("base_answer", ""),
             "rag_recovered": tr.get("rag_recovered", False),
             "rag_gate": tr.get("rag_gate", ""),
             "reader": READER,
