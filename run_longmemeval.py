@@ -67,6 +67,8 @@ if pageindex.PI_REASON:                               # reasoning answer-step A/
     _tag += "_reason"
 if pageindex.PI_DATEMATH:                             # deterministic date-math A/B: own files too
     _tag += "_datemath"
+if pageindex.PI_RECENCY:                              # value-history/recency A/B: own files too
+    _tag += "_recency"
 
 config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _LME_RESULTS = config.RESULTS_DIR / "longmemeval"
@@ -199,7 +201,7 @@ def main():
              "INFER": pi_rag.PI_RAG_INFER, "GATE": pi_rag.PI_RAG_GATE, "HYDE": pi_rag.PI_RAG_HYDE,
              "FORCE_AGG": pageindex.PI_RAG_FORCE_AGG, "VERIFY": pageindex.PI_RAG_VERIFY,
              "NAV_BROAD": pageindex.PI_NAV_BROAD, "REASON": pageindex.PI_REASON,
-             "DATEMATH": pageindex.PI_DATEMATH}
+             "DATEMATH": pageindex.PI_DATEMATH, "RECENCY": pageindex.PI_RECENCY}
     rd = f"{config.QUERY_PROVIDER}/{READER}" + (
         f"   [overridden from {DEFAULT_READER}]" if READER != DEFAULT_READER else "")
     print("=" * 70)
@@ -211,7 +213,7 @@ def main():
     print(f"  PI_RAG={flags['PI_RAG']}  hybrid={flags['HYBRID']}  infer={flags['INFER']}  "
           f"gate={flags['GATE']}  hyde={flags['HYDE']}  force_agg={flags['FORCE_AGG']}  "
           f"verify={flags['VERIFY']}  nav_broad={flags['NAV_BROAD']}  reason={flags['REASON']}  "
-          f"datemath={flags['DATEMATH']}  tau={pi_rag.TAU}")
+          f"datemath={flags['DATEMATH']}  recency={flags['RECENCY']}  tau={pi_rag.TAU}")
     print(f"  outputs: {RESULTS_PATH}  +  {SUMMARY_PATH}")
     print("=" * 70)
     missing = [k for k in ("PI_RAG", "HYBRID", "INFER") if not flags[k]]
@@ -287,6 +289,10 @@ def main():
             "datemath": tr.get("datemath", ""),
             "datemath_events": tr.get("datemath_events", ""),
             "datemath_table": tr.get("datemath_table", ""),
+            "recency": tr.get("recency", ""),
+            "recency_retrieved": tr.get("recency_retrieved", 0),
+            "recency_states": tr.get("recency_states", ""),
+            "recency_table": tr.get("recency_table", ""),
             "verify_verdict": tr.get("verify_verdict", ""),
             "base_answer": tr.get("base_answer", ""),
             "rag_recovered": tr.get("rag_recovered", False),

@@ -66,6 +66,34 @@ PI_NAV_BROAD = os.environ.get("PI_NAV_BROAD", "").strip().lower() in ("1", "true
 # answer path when no dated events can be extracted. Toggle: PI_DATEMATH=1
 PI_DATEMATH = os.environ.get("PI_DATEMATH", "").strip().lower() in ("1", "true", "yes")
 
+# Recency / value-history layer (default off). Knowledge-update questions fail because the corpus
+# holds a DATED SEQUENCE of values for one attribute (Rachel moved to Chicago May 24 -> back to the
+# suburbs May 27) and the reader returns whichever value navigation surfaced most directly, blind to
+# which is newest. Datemath's sibling, same extract->compute->copy shape: (1) LLM extracts every
+# dated statement of the asked attribute (actual states only — never plans/considerations, which are
+# lures); (2) PYTHON sorts the history and marks the LATEST entry as superseding; (3) the LLM answers
+# from the history — latest by default, second-latest for "previous ..." questions, combined for
+# "so far" totals. Trigger = language-general state markers, NOT the dataset's type label. Recency
+# questions also navigate BROAD (the value history is scattered by nature). Toggle: PI_RECENCY=1
+PI_RECENCY = os.environ.get("PI_RECENCY", "").strip().lower() in ("1", "true", "yes")
+
+_RECENCY_RE = re.compile(
+    r'\brecent(?:ly)?\b|\bcurrently\b|\bcurrent\b|\blatest\b|\bnewest\b'        # explicit latest
+    r'|\bstill\b|\banymore\b|\bthese days\b|\bnowadays\b|\busually\b'           # present state/habit
+    r'|\bso far\b|\bup to now\b|\bin total now\b'                               # running totals
+    # the value BEFORE last — but NOT "our previous chat/conversation" (that's conversational
+    # framing, typical of single-session-assistant recall questions, not a changed value):
+    r'|\bprevious(?:ly)?\b(?!\s+(?:chat|conversation|discussion|session|talk))'
+    r'|\bbefore (?:the|my|that)\b'
+    r'|\bagain\b|\bswitched\b|\bchanged\b|\bupdated\b',                         # change markers
+    re.IGNORECASE)
+
+
+def is_recency(question: str) -> bool:
+    """True for questions about the CURRENT/LATEST (or explicitly previous) state of something that
+    may have changed over time — the class the value-history layer handles."""
+    return bool(_RECENCY_RE.search(question or ""))
+
 _DATEMATH_RE = re.compile(
     r'\bhow long\b|\bhow old\b'                                             # duration / age
     r'|\bhow many (?:days|weeks|months|years)\b'                            # counted spans
@@ -159,14 +187,27 @@ NAV_MAX_SESSIONS = 3        # default: precision (open the best session(s))
 NAV_BROAD_SESSIONS = 8      # aggregation: recall (open every session with a relevant instance)
 
 
-def _navigate(question, nodes, broad=False, trace=None):
+def _navigate(question, nodes, broad=False, recency=False, trace=None):
     """Reasoning-based node selection — the LLM picks relevant session(s) from the index.
     broad=True (for count/compare/aggregate questions): recall over precision — gather EVERY
     session that could hold a relevant instance, because the answer is scattered across the
-    conversation and reasoning needs the complete set, not the single best session."""
+    conversation and reasoning needs the complete set, not the single best session.
+    recency=True (for current/latest-state questions): the same completeness discipline, but
+    framed for VALUE CHANGES — prioritise later-dated sessions, because a newer mention
+    supersedes older ones and missing it means a stale answer."""
     cap = NAV_BROAD_SESSIONS if broad else NAV_MAX_SESSIONS
     toc = "\n".join(f"SESSION {n['key']} ({n['date']}): {n['summary']}" for n in nodes)
-    if broad:
+    if recency and broad:
+        sys = (
+            "You navigate a conversation by its session index. The question asks about the "
+            "CURRENT or LATEST state of something that may have CHANGED over time, so "
+            "COMPLETENESS ACROSS TIME matters more than precision: select EVERY session whose "
+            "summary could mention this entity or attribute — especially LATER-dated sessions, "
+            "since a newer mention supersedes older ones and missing it means answering with a "
+            "STALE value. Each line is 'SESSION <key> (<date>): <summary>'. Reply with the "
+            f"session keys exactly as shown (up to {cap}), comma-separated, or NONE if none "
+            "are relevant.")
+    elif broad:
         sys = (
             "You navigate a conversation by its session index. This question needs to COUNT, "
             "COMPARE, or AGGREGATE across the whole conversation, so COMPLETENESS matters more "
@@ -378,6 +419,122 @@ def _answer_datemath(question, turns, qdate, trace=None):
     return out2.strip(), tok
 
 
+RECENCY_TOPK = 12    # deeper than RAG's answering k: gathering a value HISTORY is a recall task,
+                     # and extraction filters non-states, so noise in the candidate turns is cheap
+
+
+def _recency_retrieve(question, index, nav_turns, trace=None):
+    """Augment the recency layer's evidence with the RAG retrieval pass (cosine+BM25 over ALL raw
+    turns). Value updates are usually lexically findable ('Rachel ... moved ... suburbs') even when
+    their session's nav summary ERASED them — retrieval reads turns, not summaries, so it reaches
+    what navigation structurally cannot. Returns (merged_turns, n_added); every turn carries its
+    session date, which the extraction step needs. Falls back to nav_turns alone on any failure."""
+    import pi_rag
+    try:
+        turns, vecs = pi_rag.turn_embeddings(index)
+        if not vecs:
+            return nav_turns, 0
+        qv = pi_rag._embed([question])[0]
+        if not qv:
+            return nav_turns, 0
+        qn = pi_rag._normalize(qv)
+        sims = [sum(a * b for a, b in zip(qn, v)) for v in vecs]
+        order = sorted(range(len(sims)), key=lambda i: sims[i], reverse=True)
+        if pi_rag.PI_RAG_HYBRID:
+            bm25 = pi_rag._bm25_for(index["sample_id"], turns)
+            hits = pi_rag._hybrid_hits(question, sims, order, bm25, RECENCY_TOPK, pi_rag.TAU)
+        else:
+            hits = [(i, sims[i]) for i in order if sims[i] >= pi_rag.TAU][:RECENCY_TOPK]
+    except Exception as e:
+        print(f"  [RECENCY RETRIEVE ERROR] {e}")
+        return nav_turns, 0
+    seen = {t.get("dia_id") for t in nav_turns if t.get("dia_id")}
+    merged, added = list(nav_turns), 0
+    for i, _ in hits:
+        t = turns[i]
+        if t.get("dia_id") not in seen:
+            merged.append(t)
+            seen.add(t.get("dia_id"))
+            added += 1
+    if trace is not None:
+        trace["recency_retrieved"] = added
+    return merged, added
+
+
+def _answer_recency(question, turns, qdate, trace=None):
+    """3-step knowledge-update answer: LLM extracts the dated VALUE HISTORY of the asked attribute
+    -> Python sorts it and marks the latest -> LLM answers from the history (latest by default).
+    Returns (None, tok) when no dated states can be extracted (caller falls back)."""
+    body = _turns_block(turns, dated=True)
+    sys1 = (
+        "You extract the DATED VALUE HISTORY of one attribute from conversation excerpts, so the "
+        "LATEST value can be selected in code. The question asks about something that may have "
+        "CHANGED over time. List every statement of its value/state, one per line, EXACTLY:\n"
+        "STATE: <the value or state as stated> || DATE: <YYYY-MM-DD>\n"
+        "- Each excerpt is tagged [date] = when it was SPOKEN. Date each state by when it became "
+        "true if stated ('three weeks ago' resolved against the tag), else by the tag itself.\n"
+        "- ONLY actual states/events. NEVER include plans, considerations, or wishes ('thinking "
+        "about getting a wide-angle lens' is NOT a purchase).\n"
+        "- Include statements that UPDATE or REVERSE earlier ones ('moved back again', 'switched "
+        "to', 'another 2') — the history is the point.\n"
+        "- If only the month is known, DATE: <YYYY-MM>; only the year, DATE: <YYYY>.\n"
+        "- Output ONLY STATE lines, no commentary.")
+    usr1 = f"QUESTION (defines the attribute): {question}\n\nEXCERPTS:\n{body}\n\nSTATE lines:"
+    out1 = query_call([{"role": "system", "content": sys1},
+                       {"role": "user", "content": usr1}], temperature=0.0)
+    tok = estimate_tokens(sys1) + estimate_tokens(usr1) + estimate_tokens(out1)
+
+    states = []
+    for ln in out1.splitlines():
+        m = re.match(r'\s*STATE:\s*(.+?)\s*\|\|\s*DATE:\s*(\S+)', ln)
+        if not m:
+            continue
+        desc, ds = m.group(1), m.group(2).strip().rstrip('.')
+        md = re.match(r'(\d{4})(?:-(\d{1,2}))?(?:-(\d{1,2}))?$', ds)
+        if not md:
+            continue
+        try:
+            states.append((desc, _date(int(md.group(1)), int(md.group(2) or 7),
+                                       int(md.group(3) or 15))))
+        except ValueError:
+            continue
+    if trace is not None:
+        trace["recency_states"] = out1.strip()
+    if not states:
+        if trace is not None:
+            trace["recency"] = "no_states"
+        return None, tok
+
+    states.sort(key=lambda s: s[1])
+    L = []
+    if qdate:
+        L.append(f"TODAY (the date the question is asked): {qdate.isoformat()}")
+    L.append("VALUE HISTORY (oldest -> newest, sorted in code):")
+    for i, (desc, dt) in enumerate(states, 1):
+        tag = "   <== LATEST (supersedes all earlier values)" if i == len(states) else ""
+        L.append(f"  {i}. {dt.isoformat()} — {desc}{tag}")
+    table = "\n".join(L)
+    if trace is not None:
+        trace["recency"] = "computed"
+        trace["recency_table"] = table
+
+    sys2 = (
+        "Answer the question using ONLY the VALUE HISTORY below (sorted oldest -> newest in code).\n"
+        "- By default the answer is the LATEST entry — earlier values are superseded.\n"
+        "- If the question asks for the PREVIOUS value (the one before the change), use the entry "
+        "just before the latest.\n"
+        "- If the question asks for a running total ('so far'), combine the entries.\n"
+        "- Copy the value's wording from the entry; do not add anything.\n"
+        "- Only if no entry is relevant to the question, answer exactly: This information is not "
+        "available.\n"
+        "Output ONLY the short final answer.")
+    usr2 = f"QUESTION: {question}\n\n{table}\n\nAnswer:"
+    out2 = query_call([{"role": "system", "content": sys2},
+                       {"role": "user", "content": usr2}], temperature=0.0)
+    tok += estimate_tokens(sys2) + estimate_tokens(usr2) + estimate_tokens(out2)
+    return out2.strip(), tok
+
+
 def _is_grounded(question, answer, turns, trace=None):
     """Cheap grounding check: is ANSWER actually supported by the EVIDENCE it was drawn from?
     A genuine verification (fact present, arithmetic/date-math recomputed, recency respected) — not a
@@ -423,18 +580,30 @@ def query(index, question, question_date=None):
     # so total/average questions qualify too), answer step unchanged. Date-math questions also
     # navigate broad — an ordering/duration needs the events from EVERY involved session.
     datemath_q = PI_DATEMATH and is_temporal_math(question)
+    # Recency questions also navigate broad: the value history is scattered by nature (each update
+    # lives in a different session). Datemath keeps precedence — duration questions need arithmetic
+    # over the history, not a pick from it.
+    recency_q = PI_RECENCY and is_recency(question) and not datemath_q
     broad = (PI_REASON and needs_reasoning(question)) or \
-            (PI_NAV_BROAD and (needs_reasoning(question) or is_aggregate(question))) or datemath_q
-    keys = _navigate(question, nodes, broad=broad, trace=trace)
+            (PI_NAV_BROAD and (needs_reasoning(question) or is_aggregate(question))) or \
+            datemath_q or recency_q
+    keys = _navigate(question, nodes, broad=broad, recency=recency_q, trace=trace)
     if keys:
         turns = _collect_turns(nodes, keys)
         ans, dm_tok = None, 0
         if datemath_q:                                    # extract dates -> compute in code -> copy
             qd = _parse_qdate(question_date)
             ans, dm_tok = _answer_datemath(question, turns, qd, trace=trace)
-        if ans is None:                                   # not a datemath q, or no dated events
+        elif recency_q:                                   # extract value history -> pick latest
+            qd = _parse_qdate(question_date)
+            ev_turns = turns
+            if PI_RAG:                                    # RAG retrieval augmentation: reach value
+                ev_turns, _ = _recency_retrieve(          # updates whose sessions nav can't see
+                    question, index, turns, trace=trace)  # (summary erased them; turns are visible)
+            ans, dm_tok = _answer_recency(question, ev_turns, qd, trace=trace)
+        if ans is None:                                   # no trigger, or extraction found nothing
             ans = _answer(question, turns, trace=trace)   # (_answer assigns ans_tokens)
-        trace["ans_tokens"] = trace.get("ans_tokens", 0) + dm_tok   # add datemath cost (0 if unused)
+        trace["ans_tokens"] = trace.get("ans_tokens", 0) + dm_tok   # add layer cost (0 if unused)
     else:
         turns, ans = [], "This information is not available."
 
