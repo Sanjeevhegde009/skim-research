@@ -89,6 +89,13 @@ PI_RECENCY = os.environ.get("PI_RECENCY", "").strip().lower() in ("1", "true", "
 # 500), does NOT move disguised counts. Toggle: PI_EVUNION=1
 PI_EVUNION = os.environ.get("PI_EVUNION", "").strip().lower() in ("1", "true", "yes")
 
+# Rich navigation index (branch feat/rich-index). Replaces the lossy 2-4 sentence summary nav with
+# retrieve-over-ledger: a de-disguised per-session fact ledger is embedded, and navigation ranks
+# sessions by cosine to the question — so an incidental instance the summary dropped ("out of my
+# league" = a property viewing) can still open its session. Nav-ONLY; answers still come from RAW
+# turns. Flag-gated + cached in its own dir so the validated "holy" 0.722 index is never touched.
+PI_RICHINDEX = os.environ.get("PI_RICHINDEX", "").strip().lower() in ("1", "true", "yes")
+
 _RECENCY_RE = re.compile(
     r'\brecent(?:ly)?\b|\bcurrently\b|\bcurrent\b|\blatest\b|\bnewest\b'        # explicit latest
     r'|\bstill\b|\banymore\b|\bthese days\b|\bnowadays\b|\busually\b'           # present state/habit
@@ -617,7 +624,12 @@ def query(index, question, question_date=None):
     agg_q = PI_NAV_BROAD and (needs_reasoning(question) or is_aggregate(question)) \
         and not datemath_q and not recency_q
     broad = (PI_REASON and needs_reasoning(question)) or agg_q or datemath_q or recency_q
-    keys = _navigate(question, nodes, broad=broad, recency=recency_q, trace=trace)
+    if PI_RICHINDEX:
+        import rich_index
+        cap = NAV_BROAD_SESSIONS if broad else NAV_MAX_SESSIONS
+        keys = rich_index.navigate_rich(question, index, cap, trace=trace)
+    else:
+        keys = _navigate(question, nodes, broad=broad, recency=recency_q, trace=trace)
     turns = _collect_turns(nodes, keys) if keys else []
     # Evidence union: gather ONCE for every compute-layer question — including when nav returned
     # NONE, so retrieval-only evidence still reaches the compute layer instead of refusing outright.
