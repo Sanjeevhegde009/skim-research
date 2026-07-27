@@ -73,6 +73,8 @@ if pageindex.PI_EVUNION:                              # evidence-union A/B: own 
     _tag += "_evunion"
 if pageindex.PI_RICHINDEX:                            # rich-index (retrieve-over-ledger nav): own files too
     _tag += "_rich"
+if pageindex.PI_DENSITY:                              # density-capped reader window: own files too
+    _tag += "_density"
 
 config.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 _LME_RESULTS = config.RESULTS_DIR / "longmemeval"
@@ -206,7 +208,8 @@ def main():
              "FORCE_AGG": pageindex.PI_RAG_FORCE_AGG, "VERIFY": pageindex.PI_RAG_VERIFY,
              "NAV_BROAD": pageindex.PI_NAV_BROAD, "REASON": pageindex.PI_REASON,
              "DATEMATH": pageindex.PI_DATEMATH, "RECENCY": pageindex.PI_RECENCY,
-             "EVUNION": pageindex.PI_EVUNION, "RICHINDEX": pageindex.PI_RICHINDEX}
+             "EVUNION": pageindex.PI_EVUNION, "RICHINDEX": pageindex.PI_RICHINDEX,
+             "DENSITY": pageindex.PI_DENSITY}
     rd = f"{config.QUERY_PROVIDER}/{READER}" + (
         f"   [overridden from {DEFAULT_READER}]" if READER != DEFAULT_READER else "")
     print("=" * 70)
@@ -219,7 +222,7 @@ def main():
           f"gate={flags['GATE']}  hyde={flags['HYDE']}  force_agg={flags['FORCE_AGG']}  "
           f"verify={flags['VERIFY']}  nav_broad={flags['NAV_BROAD']}  reason={flags['REASON']}  "
           f"datemath={flags['DATEMATH']}  recency={flags['RECENCY']}  evunion={flags['EVUNION']}  "
-          f"rich={flags['RICHINDEX']}  tau={pi_rag.TAU}")
+          f"rich={flags['RICHINDEX']}  density={flags['DENSITY']}  tau={pi_rag.TAU}")
     print(f"  outputs: {RESULTS_PATH}  +  {SUMMARY_PATH}")
     print("=" * 70)
     missing = [k for k in ("PI_RAG", "HYBRID", "INFER") if not flags[k]]

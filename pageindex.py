@@ -96,6 +96,14 @@ PI_EVUNION = os.environ.get("PI_EVUNION", "").strip().lower() in ("1", "true", "
 # turns. Flag-gated + cached in its own dir so the validated "holy" 0.722 index is never touched.
 PI_RICHINDEX = os.environ.get("PI_RICHINDEX", "").strip().lower() in ("1", "true", "yes")
 
+# Density-preserving evidence assembly (rung 1). On COMPUTE routes (datemath/recency/agg) the reader
+# gets a retrieval-RANKED, density-capped window instead of whole navigated sessions: base = global
+# hybrid top-K (holy's proven window), + a bounded per-nav-session injection for sessions global
+# retrieval missed. Keeps a pivot fact at high salience no matter how many sessions nav returned —
+# the fix for the "superset but diluted" regression. Falls back to collect+union when embeddings are
+# unavailable. Compute routes only (lookup untouched). Toggle: PI_DENSITY=1
+PI_DENSITY = os.environ.get("PI_DENSITY", "").strip().lower() in ("1", "true", "yes")
+
 _RECENCY_RE = re.compile(
     r'\brecent(?:ly)?\b|\bcurrently\b|\bcurrent\b|\blatest\b|\bnewest\b'        # explicit latest
     r'|\bstill\b|\banymore\b|\bthese days\b|\bnowadays\b|\busually\b'           # present state/habit
@@ -495,6 +503,68 @@ def _recency_retrieve(question, index, nav_turns, trace=None, key="recency"):
     return merged, added
 
 
+# ── density-preserving evidence assembly (PI_DENSITY) ────────────────────────────
+READER_TURNS = int(os.environ.get("PI_DENSITY_K", str(RECENCY_TOPK)))   # capped reader window (=12)
+INJECT_PER   = int(os.environ.get("PI_DENSITY_INJECT_PER", "2"))        # top turns per absent nav session
+INJECT_CAP   = int(os.environ.get("PI_DENSITY_INJECT_CAP", "6"))        # total injected (window <= K+CAP)
+
+
+def _assemble_density(question, index, keys, trace=None):
+    """Compute-route evidence as a retrieval-RANKED, density-capped window (rung 1). Instead of
+    dumping whole navigated sessions:
+      base   = global hybrid top-READER_TURNS  (the density-optimal window holy already wins with)
+      inject = for each nav session ABSENT from base, its top INJECT_PER turns clearing INJECT_TAU,
+               up to INJECT_CAP total  (a bounded recall boost for what global retrieval missed)
+    Navigation becomes a recall booster, not a whole-session dump, so a pivot fact stays salient
+    regardless of how many sessions nav returned. Returns the window (turn dicts carrying dates), or
+    None if embeddings are unavailable (the caller then falls back to collect+union)."""
+    import pi_rag
+    try:
+        turns, vecs = pi_rag.turn_embeddings(index)
+        if not vecs:
+            return None
+        qv = pi_rag._embed([question])[0]
+        if not qv:
+            return None
+        qn = pi_rag._normalize(qv)
+        sims = [sum(a * b for a, b in zip(qn, v)) for v in vecs]
+        order = sorted(range(len(sims)), key=lambda i: sims[i], reverse=True)
+        if pi_rag.PI_RAG_HYBRID:
+            bm25 = pi_rag._bm25_for(index["sample_id"], turns)
+            hits = pi_rag._hybrid_hits(question, sims, order, bm25, READER_TURNS, pi_rag.TAU)
+            base_idx = [i for i, _ in hits]
+        else:
+            base_idx = [i for i in order if sims[i] >= pi_rag.TAU][:READER_TURNS]
+    except Exception as e:
+        print(f"  [DENSITY ASSEMBLE ERROR] {e}")
+        return None
+    base_diaids = {turns[i].get("dia_id") for i in base_idx}
+    sess_of = {}                                              # dia_id -> session key (nodes' order)
+    for n in index["nodes"]:
+        for t in n["turns"]:
+            sess_of[t.get("dia_id")] = n["key"]
+    tau_inj = float(os.environ.get("PI_DENSITY_INJECT_TAU", str(pi_rag.TAU)))
+    keyset = set(keys or [])
+    injected, per = [], {}
+    for i in order:                                          # cosine-desc; most relevant first
+        if len(injected) >= INJECT_CAP:
+            break
+        did = turns[i].get("dia_id")
+        sk = sess_of.get(did)
+        if sk in keyset and did not in base_diaids and sims[i] >= tau_inj \
+                and per.get(sk, 0) < INJECT_PER:
+            injected.append(i)
+            per[sk] = per.get(sk, 0) + 1
+    window = [turns[i] for i in base_idx + injected]
+    window.sort(key=lambda t: (t.get("date", ""), t.get("dia_id", "")))   # chronological for dates
+    if trace is not None:
+        trace["density_base"] = len(base_idx)
+        trace["density_injected"] = len(injected)
+        trace["density_inject_per_session"] = dict(per)
+        trace["union_retrieved"] = len(window)
+    return window
+
+
 def _answer_recency(question, turns, qdate, trace=None):
     """3-step knowledge-update answer: LLM extracts the dated VALUE HISTORY of the asked attribute
     -> Python sorts it and marks the latest -> LLM answers from the history (latest by default).
@@ -630,12 +700,26 @@ def query(index, question, question_date=None):
         keys = rich_index.navigate_rich(question, index, cap, trace=trace)
     else:
         keys = _navigate(question, nodes, broad=broad, recency=recency_q, trace=trace)
-    turns = _collect_turns(nodes, keys) if keys else []
-    # Evidence union: gather ONCE for every compute-layer question — including when nav returned
-    # NONE, so retrieval-only evidence still reaches the compute layer instead of refusing outright.
-    union_q = PI_EVUNION and PI_RAG and (datemath_q or recency_q or agg_q)
-    if union_q:
-        turns, _ = _recency_retrieve(question, index, turns, trace=trace, key="union")
+    compute_q = datemath_q or recency_q or agg_q
+    # Evidence assembly. Default (PI_EVUNION): collect whole navigated sessions, then append the
+    # hybrid retrieval hits. PI_DENSITY (rung 1): on compute routes, hand the reader a retrieval-
+    # RANKED, density-capped window instead (base = global hybrid top-K + bounded per-nav-session
+    # injection) so a pivot fact stays salient regardless of how many sessions nav returned. Falls
+    # back to collect+union when embeddings are unavailable.
+    union_q = PI_EVUNION and PI_RAG and compute_q
+    if PI_DENSITY and PI_RAG and compute_q:
+        dturns = _assemble_density(question, index, keys, trace=trace)
+        if dturns is not None:
+            turns, union_q = dturns, True          # density window is already retrieval-augmented
+        else:                                      # embeddings unavailable -> current behavior
+            turns = _collect_turns(nodes, keys) if keys else []
+            turns, _ = _recency_retrieve(question, index, turns, trace=trace, key="union")
+    else:
+        turns = _collect_turns(nodes, keys) if keys else []
+        # Evidence union: gather ONCE for every compute-layer question — including when nav returned
+        # NONE, so retrieval-only evidence still reaches the compute layer instead of refusing.
+        if union_q:
+            turns, _ = _recency_retrieve(question, index, turns, trace=trace, key="union")
     if turns:
         ans, dm_tok = None, 0
         if datemath_q:                                    # extract dates -> compute in code -> copy
