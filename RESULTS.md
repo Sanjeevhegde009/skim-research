@@ -1,16 +1,17 @@
 # LongMemEval_S — Results
 
 Reader: **gpt-4.1-mini**. Judge: official LongMemEval GPT-4o yes/no (via `rescore_longmemeval.py`).
-Baselines and configs are compared on the **same 500 questions**.
+All configs are compared on the **same 500 questions**.
 
 ## skim, full config = **0.766** (full 500)
 
-**Pareto-dominates the 0.722 baseline: +0.044 accuracy AND 40% fewer reader tokens, with fewer
-hallucinations.** +0.044 on 500 is above the ±0.02 drift floor (+46 gains / −24 regressions, +22 net).
-(The full config adds three mechanisms to the 0.722 baseline — ledger navigation, a focused evidence
-window, and count-safe routing; the ladder and flags are below.)
+The comparison point is **the same framework without the three added mechanisms — the "0.722
+config"** (the full config adds ledger navigation, a focused evidence window, and count-safe routing;
+see the ladder below). Against it, the full config **Pareto-dominates: +0.044 accuracy AND 40% fewer
+reader tokens, with fewer hallucinations.** +0.044 on 500 is above the ±0.02 drift floor (+46 gains /
+−24 regressions, +22 net).
 
-| type | n | base 0.722 | skim 0.766 | Δ |
+| type | n | 0.722 config | skim (full) | Δ |
 |------|---|-----------|-----------|---|
 | single-session-user | 70 | 0.829 | 0.929 | +0.100 |
 | single-session-preference | 30 | 0.200 | 0.367 | +0.167 |
@@ -20,8 +21,8 @@ window, and count-safe routing; the ladder and flags are below.)
 | single-session-assistant | 56 | 0.964 | 0.911 | −0.054 |
 | **OVERALL** | **500** | **0.722** | **0.766** | **+0.044** |
 
-Economy & honesty (same 500): reader **7,514 tok/q (60% of the baseline's 12,522)**, $0.0031/q vs
-$0.0051; hallucinations **9/500** (baseline 13); abstention **0.700** (baseline 0.667).
+Economy & honesty (same 500, full config vs the 0.722 config): reader **7,514 tok/q vs 12,522
+(60%)**, $0.0031/q vs $0.0051; hallucinations **9/500 vs 13**; abstention **0.700 vs 0.667**.
 
 The one regression (single-session-assistant, a *lookup* route the density window never touches) is
 because ledger navigation is slightly worse than summary navigation on "what did you tell me in that
@@ -34,14 +35,14 @@ Each step adds mechanisms to the one above; the ablation is what shows 0.766 isn
 
 | step | adds (flags) | plain-English | official |
 |------|--------------|---------------|----------|
-| base | `PI_RAG + HYBRID + INFER` | navigate + RAG escalation + premise gate | 0.580 |
+| minimal | `PI_RAG + HYBRID + INFER` | navigate + RAG escalation + premise gate | 0.580 |
 | + compute | `+ NAV_BROAD + REASON + DATEMATH` | broad nav + scratchpad + date math in code | 0.654 |
 | + recency/union | `+ RECENCY + EVUNION` | latest-value tracking + retrieval-augmented evidence | **0.722** |
 | + nav/evidence | `+ RICHINDEX + DENSITY + DENSITY_SCOPE` | ledger navigation + focused window + count-safe routing | **0.766** |
 
 The 0.722 step is tagged `baseline-0.722`; the full config is tagged `best-0.766`.
 
-## The three added mechanisms, in detail (flag-gated, off by default; the 0.722 baseline is byte-identical when unset)
+## The three added mechanisms, in detail (flag-gated, off by default; the 0.722 config is byte-identical when unset)
 
 - **Ledger navigation** (`PI_RICHINDEX`, `rich_index.py`): a de-disguised per-session fact ledger is
   embedded; navigation ranks sessions by cosine over facts, breaching the lexical disguise summary-nav
@@ -57,7 +58,7 @@ The 0.722 step is tagged `baseline-0.722`; the full config is tagged `best-0.766
 
 ```bash
 export OPENAI_API_KEY=sk-...
-# the 0.722 baseline (8 flags) + the 3 added mechanisms
+# the 0.722 config (8 flags) + the 3 added mechanisms
 export PI_RAG=1 PI_RAG_HYBRID=1 PI_RAG_INFER=1 PI_NAV_BROAD=1 PI_REASON=1 \
        PI_DATEMATH=1 PI_RECENCY=1 PI_EVUNION=1 \
        PI_RICHINDEX=1 PI_DENSITY=1 PI_DENSITY_SCOPE=1
@@ -66,10 +67,10 @@ python rescore_longmemeval.py results/longmemeval/results_navbroad_reason_datema
 ```
 
 Escape hatches: `PI_DENSITY_SCOPE=` off → the density cap applies to every compute route (counts
-included); all three mechanisms off → the 0.722 baseline.
+included); all three mechanisms off → the 0.722 config.
 
 ## Git references
 
-- `baseline-0.722` — the stable baseline (git tag, commit `bd13855`).
+- `baseline-0.722` — the stable 0.722 config, i.e. skim without the three added mechanisms (git tag, commit `bd13855`).
 - `best-0.766` — skim's full config: ledger navigation + focused window + count-safe routing (git tag).
 - All on `main`.

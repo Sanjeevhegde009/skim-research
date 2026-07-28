@@ -81,7 +81,7 @@ python rescore_longmemeval.py results/longmemeval/results_navbroad_reason_datema
 answers with LongMemEval's official GPT-4o yes/no judge (the comparable number). Both are resumable
 and cache-backed — a re-run only recomputes what changed.
 
-**LoCoMo** (validated on the base config):
+**LoCoMo** (validated on the minimal config — just `PI_RAG PI_RAG_HYBRID PI_RAG_INFER`):
 ```bash
 export PI_RAG=1 PI_RAG_HYBRID=1 PI_RAG_INFER=1
 python run_pageindex.py 0            # one conversation (2nd arg caps QA, e.g. `0 20`)
@@ -106,8 +106,8 @@ same judge, same 500 questions — is against the standard strong baseline, GPT-
 | fabrication rate | **1.8%** | high (answers false-premise Qs) |
 | abstention (correct refusals) | **0.700** | — |
 
-Against the baseline everyone anchors on, this wins all three axes at once: **+0.16 accuracy, ~118×
-cheaper per correct answer, and far less fabrication.**
+Against that GPT-4o full-context baseline — the one everyone anchors on — this wins all three axes at
+once: **+0.16 accuracy, ~118× cheaper per correct answer, and far less fabrication.**
 
 **Where it sits in the wider field — directional, verify before quoting.** Cross-system LongMemEval
 numbers are *not* reliable: reader model, judge, subset, and prompt all differ between reports. Top
