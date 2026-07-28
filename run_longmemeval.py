@@ -1,5 +1,5 @@
 """
-Run the PageIndex + RAG framework on LongMemEval_S — our SECOND benchmark.
+Run the PageIndex + RAG framework on LongMemEval_S (the second benchmark, alongside LoCoMo).
 
 Why a separate runner: LongMemEval gives each QUESTION its own haystack of ~50-80 sessions
 (~115K tokens, designed to OVERFLOW the context window), so we build ONE index PER QUESTION
@@ -31,7 +31,6 @@ import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime
-from pathlib import Path
 
 import requests
 

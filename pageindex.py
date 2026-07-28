@@ -1,5 +1,5 @@
 """
-PageIndex-style VECTORLESS RAG over the RAW conversation (experiment branch).
+PageIndex-style VECTORLESS RAG over the RAW conversation.
 
 No embeddings, no wiki compilation. The pipeline is index-then-navigate:
   1. BUILD a tree index — one node per session, each with an LLM-written "table of contents"
@@ -15,7 +15,6 @@ import json
 import os
 import re
 from datetime import date as _date
-from pathlib import Path
 
 import config
 from llm import compiler_call, query_call, estimate_tokens
@@ -62,23 +61,20 @@ PI_DATEMATH = os.environ.get("PI_DATEMATH", "").strip().lower() in ("1", "true",
 # questions also navigate BROAD (the value history is scattered by nature). Toggle: PI_RECENCY=1
 PI_RECENCY = os.environ.get("PI_RECENCY", "").strip().lower() in ("1", "true", "yes")
 
-# Evidence-union (default off) — the deconfounded test of "RAG for multi-session". force_agg's
-# negative (fired 18, fixed 1) conflated two failure modes: retrieval-miss (disguised instances,
-# unfixable at query time) and COMPOSE-miss (evidence retrieved, arithmetic fumbled — eggs $30).
-# This flag separates evidence GATHERING from answer COMPUTATION: for every compute-layer question
-# (aggregate / datemath / recency), evidence = nav-opened turns UNIONED with the global retrieval
-# pass, and the answering end is the matching compute layer (scratchpad / date table / value
-# history) — never pi_rag's compose. Also: when nav returns NONE for these questions, retrieval-only
-# evidence still feeds the compute layer instead of refusing outright (the 21 temporal nav-miss
-# bucket). Prediction on record: recovers compose-failure + findable-evidence residue (~+2-4 on the
-# 500), does NOT move disguised counts. Toggle: PI_EVUNION=1
+# Evidence-union (default off). Separates evidence GATHERING from answer COMPUTATION for the
+# compute-layer questions (aggregate / datemath / recency): evidence = nav-opened turns UNIONED with
+# a global retrieval pass (cosine + BM25 over ALL turns), and the answer comes from the matching
+# compute layer (scratchpad / date table / value history), never pi_rag's compose. Recovers two
+# residues the base path lost: a value/event the summary erased but retrieval can still find, and
+# compute questions where nav returned NONE (retrieval-only evidence then feeds the compute layer
+# instead of refusing outright). Does NOT move lexically-disguised counts. Toggle: PI_EVUNION=1
 PI_EVUNION = os.environ.get("PI_EVUNION", "").strip().lower() in ("1", "true", "yes")
 
-# Rich navigation index (branch feat/rich-index). Replaces the lossy 2-4 sentence summary nav with
-# retrieve-over-ledger: a de-disguised per-session fact ledger is embedded, and navigation ranks
-# sessions by cosine to the question — so an incidental instance the summary dropped ("out of my
-# league" = a property viewing) can still open its session. Nav-ONLY; answers still come from RAW
-# turns. Flag-gated + cached in its own dir so the validated "holy" 0.722 index is never touched.
+# Rich navigation index. Replaces the lossy 2-4 sentence summary nav with retrieve-over-ledger: a
+# de-disguised per-session fact ledger is embedded, and navigation ranks sessions by cosine to the
+# question — so an incidental instance the summary dropped ("out of my league" = a property viewing)
+# can still open its session. Nav-ONLY; answers still come from RAW turns. Flag-gated + cached in its
+# own dir so the base index cache is never touched.  (see rich_index.py)
 PI_RICHINDEX = os.environ.get("PI_RICHINDEX", "").strip().lower() in ("1", "true", "yes")
 
 # Density-preserving evidence assembly (rung 1). On COMPUTE routes (datemath/recency/agg) the reader

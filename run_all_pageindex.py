@@ -21,7 +21,6 @@ import os
 import sys
 from collections import defaultdict
 from datetime import datetime
-from pathlib import Path
 
 from locomo_loader import load_conversations
 from evaluate import score_answer, token_f1

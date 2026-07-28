@@ -1,8 +1,7 @@
 """
 LLM plumbing — provider-agnostic call layer for the compiler and query models.
 
-Extracted from the original hlma.py so the PageIndex + RAG + gate stack has no
-HLMA dependency. Two roles, driven by config.py:
+Two roles, driven by config.py:
   - compiler_call(...) — the frontier "compiler"/judge model (anthropic / openai / openai_compatible)
   - query_call(...)    — the reader model (ollama / anthropic / openai / openai_compatible)
 Keys are read from environment variables only (never stored in files).

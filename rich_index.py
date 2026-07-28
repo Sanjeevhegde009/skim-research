@@ -1,5 +1,5 @@
 """
-Rich navigation index (experiment — branch feat/rich-index).
+Rich navigation index — retrieve-over-ledger session navigation (flag: PI_RICHINDEX).
 
 The 2-4 sentence session summary used for navigation DROPS incidental instances: a property viewing
 mentioned inside a home-warranty chat ("that one in Cedar Creek was out of my league") vanishes, so
@@ -8,13 +8,14 @@ nav can never open that session and multi-session counts undercount — the "dis
 This builds a COMPLETENESS-preserving fact ledger per session: every instance / entity / dated event
 / value, DE-DISGUISED (stated as WHAT IT IS), cited to its turn. Two hard rules learned the hard way:
   1. Used for NAVIGATION ONLY. Answers still come from RAW TURNS, never from the ledger — answering
-     from rich text is what sank enriched-index (gate lures) and compiled-index (lossy digest).
+     from de-disguised text loses accuracy: it invites false-premise lures and is a lossy digest of
+     the raw turns (both measured, earlier, as net-negative).
   2. Nav RETRIEVES over the fact vectors; it does NOT dump all ledgers into one bloated ToC prompt.
      Because a de-disguised fact ("viewed a Cedar Creek property") is RETRIEVABLE where the raw turn
      ("out of my league") was not, retrieval over the ledger finds the erased instances cheaply, and
      the query-time nav prompt stays small.
 
-Flag-gated (PI_RICHINDEX) and cached in its OWN dir so the validated 0.722 index is never touched.
+Flag-gated (PI_RICHINDEX) and cached in its OWN dir so the base index cache is never touched.
 """
 import hashlib
 import json

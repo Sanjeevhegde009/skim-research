@@ -1,5 +1,5 @@
 """
-Phase-0 feasibility probe for the rich navigation index (branch feat/rich-index).
+Phase-0 feasibility probe for the rich navigation index (rich_index.py).
 
 The make-or-break question, tested on KNOWN erasure cases BEFORE building the full machinery:
   (A) CAPTURE  — does the rich compile record the incidental instances the 2-4 sentence summary
