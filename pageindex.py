@@ -77,19 +77,19 @@ PI_EVUNION = os.environ.get("PI_EVUNION", "").strip().lower() in ("1", "true", "
 # own dir so the base index cache is never touched.  (see rich_index.py)
 PI_RICHINDEX = os.environ.get("PI_RICHINDEX", "").strip().lower() in ("1", "true", "yes")
 
-# Density-preserving evidence assembly (rung 1). On COMPUTE routes (datemath/recency/agg) the reader
-# gets a retrieval-RANKED, density-capped window instead of whole navigated sessions: base = global
-# hybrid top-K (holy's proven window), + a bounded per-nav-session injection for sessions global
+# Density-preserving evidence assembly. On COMPUTE routes (datemath/recency/agg) the reader gets a
+# retrieval-RANKED, density-capped window instead of whole navigated sessions: base = global hybrid
+# top-K (the 0.722 baseline's proven window), + a bounded per-nav-session injection for sessions global
 # retrieval missed. Keeps a pivot fact at high salience no matter how many sessions nav returned —
 # the fix for the "superset but diluted" regression. Falls back to collect+union when embeddings are
 # unavailable. Compute routes only (lookup untouched). Toggle: PI_DENSITY=1
 PI_DENSITY = os.environ.get("PI_DENSITY", "").strip().lower() in ("1", "true", "yes")
 
-# Route-scoped density (rung 3). Density's capped window helps BOUNDED-PIVOT compute (age, one
-# duration, latest value) but drops instances on COMPLETENESS compute (counts, orderings) — so
-# scoping keeps the cap only for the former and routes counts/orderings back to whole-session +
-# union completeness. When OFF, PI_DENSITY is blanket (rung 1/2 behavior) — so turning this off and
-# rerunning reproduces plain rich+density exactly. Toggle: PI_DENSITY_SCOPE=1
+# Route-scoped density. Density's capped window helps BOUNDED-PIVOT compute (age, one duration,
+# latest value) but drops instances on COMPLETENESS compute (counts, orderings) — so scoping keeps
+# the cap only for the former and routes counts/orderings back to whole-session + union completeness.
+# When OFF, PI_DENSITY applies the cap to every compute route — so turning this off and rerunning
+# reproduces the density-only config (no scoping) exactly. Toggle: PI_DENSITY_SCOPE=1
 PI_DENSITY_SCOPE = os.environ.get("PI_DENSITY_SCOPE", "").strip().lower() in ("1", "true", "yes")
 
 _RECENCY_RE = re.compile(
@@ -511,9 +511,9 @@ INJECT_CAP   = int(os.environ.get("PI_DENSITY_INJECT_CAP", "6"))        # total 
 
 
 def _assemble_density(question, index, keys, trace=None):
-    """Compute-route evidence as a retrieval-RANKED, density-capped window (rung 1). Instead of
+    """Compute-route evidence as a retrieval-RANKED, density-capped window. Instead of
     dumping whole navigated sessions:
-      base   = global hybrid top-READER_TURNS  (the density-optimal window holy already wins with)
+      base   = global hybrid top-READER_TURNS  (the density-optimal window the baseline already wins with)
       inject = for each nav session ABSENT from base, its top INJECT_PER turns clearing INJECT_TAU,
                up to INJECT_CAP total  (a bounded recall boost for what global retrieval missed)
     Navigation becomes a recall booster, not a whole-session dump, so a pivot fact stays salient
@@ -674,7 +674,7 @@ def query(index, question, question_date=None):
     # Evidence assembly. Default (PI_EVUNION): collect whole navigated sessions, then append the
     # hybrid retrieval hits. PI_DENSITY: on compute routes, hand the reader a retrieval-RANKED,
     # density-capped window instead (base = global hybrid top-K + bounded per-nav-session injection)
-    # so a pivot fact stays salient. PI_DENSITY_SCOPE (rung 3): keep the cap only for BOUNDED-PIVOT
+    # so a pivot fact stays salient. PI_DENSITY_SCOPE: keep the cap only for BOUNDED-PIVOT
     # compute; route COMPLETENESS compute (counts/orderings) back to whole-session+union, because a
     # capped window drops instances there (the 99->57 / museums 2->1 breakage). Falls back to
     # collect+union when embeddings are unavailable.

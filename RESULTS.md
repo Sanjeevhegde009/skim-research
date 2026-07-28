@@ -20,13 +20,13 @@ window, and count-safe routing; the ladder and flags are below.)
 | single-session-assistant | 56 | 0.964 | 0.911 | −0.054 |
 | **OVERALL** | **500** | **0.722** | **0.766** | **+0.044** |
 
-Economy & honesty (same 500): reader **7,514 tok/q (60% of holy's 12,522)**, $0.0031/q vs $0.0051;
-hallucinations **9/500** (holy 13); abstention **0.700** (holy 0.667).
+Economy & honesty (same 500): reader **7,514 tok/q (60% of the baseline's 12,522)**, $0.0031/q vs
+$0.0051; hallucinations **9/500** (baseline 13); abstention **0.700** (baseline 0.667).
 
-The one regression (single-session-assistant, a *lookup* route density/scope never touch) is caused by
-rich's fact-nav being slightly worse than summary-nav on "what did you tell me in that chat" recall —
-isolable; the next step is nav-source routing (summary-nav for single-session lookups, rich-nav for
-compute).
+The one regression (single-session-assistant, a *lookup* route the density window never touches) is
+because ledger navigation is slightly worse than summary navigation on "what did you tell me in that
+chat" recall — isolable; the next step is nav-source routing (summary nav for single-session lookups,
+ledger nav for compute).
 
 ## Ladder (official, full 500)
 
@@ -39,9 +39,9 @@ Each step adds mechanisms to the one above; the ablation is what shows 0.766 isn
 | + recency/union | `+ RECENCY + EVUNION` | latest-value tracking + retrieval-augmented evidence | **0.722** |
 | + nav/evidence | `+ RICHINDEX + DENSITY + DENSITY_SCOPE` | ledger navigation + focused window + count-safe routing | **0.766** |
 
-The 0.722 step is tagged `holy` (the stable baseline); 0.766 is tagged `best-0.766`.
+The 0.722 step is tagged `baseline-0.722`; the full config is tagged `best-0.766`.
 
-## Mechanisms — the top rung, in detail (flag-gated, off by default; 0.722 is byte-identical when unset)
+## The three added mechanisms, in detail (flag-gated, off by default; the 0.722 baseline is byte-identical when unset)
 
 - **Ledger navigation** (`PI_RICHINDEX`, `rich_index.py`): a de-disguised per-session fact ledger is
   embedded; navigation ranks sessions by cosine over facts, breaching the lexical disguise summary-nav
@@ -57,7 +57,7 @@ The 0.722 step is tagged `holy` (the stable baseline); 0.766 is tagged `best-0.7
 
 ```bash
 export OPENAI_API_KEY=sk-...
-# the 0.722 baseline (8 flags) + the 3 top-rung mechanisms
+# the 0.722 baseline (8 flags) + the 3 added mechanisms
 export PI_RAG=1 PI_RAG_HYBRID=1 PI_RAG_INFER=1 PI_NAV_BROAD=1 PI_REASON=1 \
        PI_DATEMATH=1 PI_RECENCY=1 PI_EVUNION=1 \
        PI_RICHINDEX=1 PI_DENSITY=1 PI_DENSITY_SCOPE=1
@@ -65,10 +65,11 @@ python run_longmemeval.py            # full 500 (omit arg); writes results_..._r
 python rescore_longmemeval.py results/longmemeval/results_navbroad_reason_datemath_recency_evunion_rich_density_scoped.json
 ```
 
-Escape hatches: `PI_DENSITY_SCOPE=` off → blanket rich+density; all three off → `holy` (0.722).
+Escape hatches: `PI_DENSITY_SCOPE=` off → the density cap applies to every compute route (counts
+included); all three mechanisms off → the 0.722 baseline.
 
 ## Git references
 
-- `holy` — the stable 0.722 baseline (git tag, commit `bd13855`).
+- `baseline-0.722` — the stable baseline (git tag, commit `bd13855`).
 - `best-0.766` — skim's full config: ledger navigation + focused window + count-safe routing (git tag).
 - All on `main`.
