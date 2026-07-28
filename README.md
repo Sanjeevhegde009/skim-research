@@ -1,4 +1,6 @@
-# pageindex-rag
+# skim
+
+*Read the index, not the whole book — and admit when you don't know.*
 
 A low-context, **cite-or-refuse** memory-retrieval stack for long conversations:
 **PageIndex-over-raw** (vectorless table-of-contents navigation) + **RAG escalation**
