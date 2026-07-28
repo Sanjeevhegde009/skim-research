@@ -52,17 +52,23 @@ def main():
     import pi_rag
     print(f"query model: {config.QUERY_PROVIDER}/{config.QUERY_MODEL}  |  "
           f"compiler (index): {config.COMPILER_PROVIDER}/{config.COMPILER_MODEL}")
-    print(f"PI_RAG={pageindex.PI_RAG}  gate={pi_rag.PI_RAG_GATE}  hybrid={pi_rag.PI_RAG_HYBRID}  "
-          f"tau={pi_rag.TAU}  PI_REASON={pageindex.PI_REASON}")
+    print(f"PI_RAG={pageindex.PI_RAG} hybrid={pi_rag.PI_RAG_HYBRID} infer={pi_rag.PI_RAG_INFER} "
+          f"gate={pi_rag.PI_RAG_GATE} nav_broad={pageindex.PI_NAV_BROAD} reason={pageindex.PI_REASON} "
+          f"datemath={pageindex.PI_DATEMATH} recency={pageindex.PI_RECENCY} evunion={pageindex.PI_EVUNION} "
+          f"rich={pageindex.PI_RICHINDEX} density={pageindex.PI_DENSITY} scope={pageindex.PI_DENSITY_SCOPE} "
+          f"tau={pi_rag.TAU}")
     idx = pageindex.build_index(conv)
-    print(f"index ready: {len(idx['nodes'])} session nodes\n")
+    # LoCoMo questions are asked after the whole conversation -> reference date = latest session date
+    # (nodes are chronological). The datemath/recency layers need it to resolve "... ago" against now.
+    qdate = idx["nodes"][-1]["date"] if idx["nodes"] else None
+    print(f"index ready: {len(idx['nodes'])} session nodes  (question_date={qdate})\n")
 
     qa = conv["qa"][:limit] if limit else conv["qa"]
     results = []
     for i, q in enumerate(qa):
         question, expected = q["question"], q["answer"]
         cat = q["category_name"]
-        r = pageindex.query(idx, question)
+        r = pageindex.query(idx, question, qdate)
         ans = r["answer"]
         is_adv = (expected == "NOT_ANSWERABLE")
         sc = score_answer(question, expected, ans, cat)

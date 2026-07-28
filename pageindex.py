@@ -340,13 +340,35 @@ def _collect_turns(nodes, keys):
     return turns
 
 
+_MONTHS = {m: i for i, m in enumerate(
+    ["january", "february", "march", "april", "may", "june", "july",
+     "august", "september", "october", "november", "december"], 1)}
+
+
 def _parse_qdate(s):
-    """Parse a question/session timestamp like '2023/05/30 (Tue) 23:38' to a date, else None."""
-    m = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', s or "")
-    try:
-        return _date(int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
-    except ValueError:
-        return None
+    """Parse a question/session timestamp to a date, else None. Handles both the LongMemEval format
+    ('2023/05/30 (Tue) 23:38') and the LoCoMo verbose format ('9:55 am on 22 October, 2023'). The
+    numeric form is tried first, so LongMemEval behaviour is unchanged."""
+    s = s or ""
+    m = re.search(r'(\d{4})[/-](\d{1,2})[/-](\d{1,2})', s)                # 2023/05/30, 2023-05-30
+    if m:
+        try:
+            return _date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    m = re.search(r'\b(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})\b', s)          # 22 October, 2023
+    if m and m.group(2).lower() in _MONTHS:
+        try:
+            return _date(int(m.group(3)), _MONTHS[m.group(2).lower()], int(m.group(1)))
+        except ValueError:
+            return None
+    m = re.search(r'\b([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})\b', s)          # October 22, 2023
+    if m and m.group(1).lower() in _MONTHS:
+        try:
+            return _date(int(m.group(3)), _MONTHS[m.group(1).lower()], int(m.group(2)))
+        except ValueError:
+            return None
+    return None
 
 
 def _cal_months(a, b):

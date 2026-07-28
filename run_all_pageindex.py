@@ -77,11 +77,15 @@ def run_conv(cid, conv):
         log(f"{'='*64}\nCONV {cid} — {conv['speakers']} ({conv['sample_id']})  "
             f"started {datetime.now().isoformat()}\n{'='*64}")
         idx = pageindex.build_index(conv)
-        log(f"index: {len(idx['nodes'])} session nodes\n")
+        # LoCoMo questions are asked after the whole conversation, so the reference "question date"
+        # is the latest session's date (nodes are chronological). The datemath/recency layers need it
+        # to resolve "how many months/days ago ..." against a real "now".
+        qdate = idx["nodes"][-1]["date"] if idx["nodes"] else None
+        log(f"index: {len(idx['nodes'])} session nodes  (question_date={qdate})\n")
         results = []
         for i, q in enumerate(conv["qa"]):
             question, expected, cat = q["question"], q["answer"], q["category_name"]
-            r = pageindex.query(idx, question)
+            r = pageindex.query(idx, question, qdate)
             ans, tr = r["answer"], r.get("trace", {})
             is_adv = (expected == "NOT_ANSWERABLE")
             sc = score_answer(question, expected, ans, cat)
@@ -184,8 +188,11 @@ def main():
         rng = range(total)
     import pi_rag
     print(f"PageIndex-over-raw — convs {list(rng)}  → all output under {OUT}/")
-    print(f"PI_RAG={pageindex.PI_RAG}  gate={pi_rag.PI_RAG_GATE}  hybrid={pi_rag.PI_RAG_HYBRID}  "
-          f"infer={pi_rag.PI_RAG_INFER}  tau={pi_rag.TAU}\n")
+    print(f"PI_RAG={pageindex.PI_RAG} hybrid={pi_rag.PI_RAG_HYBRID} infer={pi_rag.PI_RAG_INFER} "
+          f"gate={pi_rag.PI_RAG_GATE} nav_broad={pageindex.PI_NAV_BROAD} reason={pageindex.PI_REASON} "
+          f"datemath={pageindex.PI_DATEMATH} recency={pageindex.PI_RECENCY} evunion={pageindex.PI_EVUNION} "
+          f"rich={pageindex.PI_RICHINDEX} density={pageindex.PI_DENSITY} scope={pageindex.PI_DENSITY_SCOPE} "
+          f"tau={pi_rag.TAU}\n")
     summary = {}
     # Pre-load any already-scored convs OUTSIDE this run's range, so even a partial run writes a
     # COMPLETE summary (every conv that has a results file). Convs in rng are (re)scored below.
