@@ -104,6 +104,13 @@ PI_RICHINDEX = os.environ.get("PI_RICHINDEX", "").strip().lower() in ("1", "true
 # unavailable. Compute routes only (lookup untouched). Toggle: PI_DENSITY=1
 PI_DENSITY = os.environ.get("PI_DENSITY", "").strip().lower() in ("1", "true", "yes")
 
+# Route-scoped density (rung 3). Density's capped window helps BOUNDED-PIVOT compute (age, one
+# duration, latest value) but drops instances on COMPLETENESS compute (counts, orderings) — so
+# scoping keeps the cap only for the former and routes counts/orderings back to whole-session +
+# union completeness. When OFF, PI_DENSITY is blanket (rung 1/2 behavior) — so turning this off and
+# rerunning reproduces plain rich+density exactly. Toggle: PI_DENSITY_SCOPE=1
+PI_DENSITY_SCOPE = os.environ.get("PI_DENSITY_SCOPE", "").strip().lower() in ("1", "true", "yes")
+
 _RECENCY_RE = re.compile(
     r'\brecent(?:ly)?\b|\bcurrently\b|\bcurrent\b|\blatest\b|\bnewest\b'        # explicit latest
     r'|\bstill\b|\banymore\b|\bthese days\b|\bnowadays\b|\busually\b'           # present state/habit
@@ -184,6 +191,22 @@ def is_aggregate(question: str) -> bool:
     """True for count / aggregate / compare questions — the ones the partial-view base path
     undercounts and should hand to RAG's global retrieval when PI_RAG_FORCE_AGG is on."""
     return bool(_AGG_RE.search(question or ""))
+
+
+_ORDER_RE = re.compile(
+    r'\border\b|\bsequence\b|\bchronolog|\barrange\b|\brank\b'
+    r'|\bearliest to latest\b|\blatest to earliest\b|\blist (all|every)\b'
+    r'|\bin what order\b|\bwhat order\b',
+    re.IGNORECASE)
+
+
+def is_ordering(question: str) -> bool:
+    """True for ORDERING / sequence questions ('order of the three trips', 'list all ...') — a
+    COMPLETENESS class that needs every event, so a density-capped window drops instances. Routes
+    (with agg) to whole-session + union completeness under PI_DENSITY_SCOPE. Deliberately excludes
+    bounded two-event 'which came first, X or Y' (no 'order'/'sequence' keyword) — those are safe
+    for the density window; a false-positive only costs token savings, never accuracy."""
+    return bool(_ORDER_RE.search(question or ""))
 
 
 def _turns_block(turns, dated=False):
@@ -702,24 +725,33 @@ def query(index, question, question_date=None):
         keys = _navigate(question, nodes, broad=broad, recency=recency_q, trace=trace)
     compute_q = datemath_q or recency_q or agg_q
     # Evidence assembly. Default (PI_EVUNION): collect whole navigated sessions, then append the
-    # hybrid retrieval hits. PI_DENSITY (rung 1): on compute routes, hand the reader a retrieval-
-    # RANKED, density-capped window instead (base = global hybrid top-K + bounded per-nav-session
-    # injection) so a pivot fact stays salient regardless of how many sessions nav returned. Falls
-    # back to collect+union when embeddings are unavailable.
+    # hybrid retrieval hits. PI_DENSITY: on compute routes, hand the reader a retrieval-RANKED,
+    # density-capped window instead (base = global hybrid top-K + bounded per-nav-session injection)
+    # so a pivot fact stays salient. PI_DENSITY_SCOPE (rung 3): keep the cap only for BOUNDED-PIVOT
+    # compute; route COMPLETENESS compute (counts/orderings) back to whole-session+union, because a
+    # capped window drops instances there (the 99->57 / museums 2->1 breakage). Falls back to
+    # collect+union when embeddings are unavailable.
+    needs_completeness = PI_DENSITY_SCOPE and (agg_q or (datemath_q and is_ordering(question)))
+    density_q = PI_DENSITY and PI_RAG and compute_q and not needs_completeness
     union_q = PI_EVUNION and PI_RAG and compute_q
-    if PI_DENSITY and PI_RAG and compute_q:
+    if density_q:
         dturns = _assemble_density(question, index, keys, trace=trace)
         if dturns is not None:
             turns, union_q = dturns, True          # density window is already retrieval-augmented
-        else:                                      # embeddings unavailable -> current behavior
+            trace["evidence"] = "density"
+        else:                                      # embeddings unavailable -> completeness fallback
             turns = _collect_turns(nodes, keys) if keys else []
             turns, _ = _recency_retrieve(question, index, turns, trace=trace, key="union")
+            trace["evidence"] = "density_fallback"
     else:
         turns = _collect_turns(nodes, keys) if keys else []
         # Evidence union: gather ONCE for every compute-layer question — including when nav returned
         # NONE, so retrieval-only evidence still reaches the compute layer instead of refusing.
         if union_q:
             turns, _ = _recency_retrieve(question, index, turns, trace=trace, key="union")
+        trace["evidence"] = "completeness" if compute_q else "lookup"
+        if needs_completeness:
+            trace["scoped_to_completeness"] = "agg" if agg_q else "ordering"
     if turns:
         ans, dm_tok = None, 0
         if datemath_q:                                    # extract dates -> compute in code -> copy
