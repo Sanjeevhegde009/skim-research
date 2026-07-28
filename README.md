@@ -2,6 +2,10 @@
 
 *Read the index, not the whole book — and admit when you don't know.*
 
+> **Status — research repo.** This is the framework and its benchmark validation
+> (LongMemEval_S, LoCoMo). A packaged, dataset-agnostic library — `skim.ingest(conversations)`
+> → `skim.answer(question)`, cite-or-refuse on **your** data — is in the works, shipping soon.
+
 A low-context, **cite-or-refuse** memory-retrieval stack for long conversations:
 **PageIndex-over-raw** (vectorless table-of-contents navigation) + **RAG escalation**
 (fires only on refusal residue) + a **premise gate** (deterministic refusal, ~1% fabrication).
