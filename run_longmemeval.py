@@ -55,12 +55,6 @@ config.QUERY_MODEL = READER
 config.QUERY_PROVIDER = PROVIDER
 OLLAMA_NUM_CTX = int(os.environ.get("LME_OLLAMA_NUM_CTX", "8192"))
 _tag = "" if READER == DEFAULT_READER else "_" + re.sub(r"[^a-z0-9]+", "", READER.lower())
-if pi_rag.PI_RAG_HYDE:                                # HyDE A/B writes to its OWN results/summary
-    _tag += "_hyde"                                   # so the validated baseline files stay intact
-if pageindex.PI_RAG_FORCE_AGG:                        # forced-aggregate-escalation A/B: own files too
-    _tag += "_aggforce"
-if pageindex.PI_RAG_VERIFY:                           # grounding-verify gate A/B: own files too
-    _tag += "_verify"
 if pageindex.PI_NAV_BROAD:                            # broad-nav A/B: own files too
     _tag += "_navbroad"
 if pageindex.PI_REASON:                               # reasoning answer-step A/B: own files too
@@ -206,8 +200,7 @@ def main():
 
     # ── header + best-config guard ───────────────────────────────────────────────
     flags = {"PI_RAG": pageindex.PI_RAG, "HYBRID": pi_rag.PI_RAG_HYBRID,
-             "INFER": pi_rag.PI_RAG_INFER, "GATE": pi_rag.PI_RAG_GATE, "HYDE": pi_rag.PI_RAG_HYDE,
-             "FORCE_AGG": pageindex.PI_RAG_FORCE_AGG, "VERIFY": pageindex.PI_RAG_VERIFY,
+             "INFER": pi_rag.PI_RAG_INFER, "GATE": pi_rag.PI_RAG_GATE,
              "NAV_BROAD": pageindex.PI_NAV_BROAD, "REASON": pageindex.PI_REASON,
              "DATEMATH": pageindex.PI_DATEMATH, "RECENCY": pageindex.PI_RECENCY,
              "EVUNION": pageindex.PI_EVUNION, "RICHINDEX": pageindex.PI_RICHINDEX,
@@ -221,8 +214,7 @@ def main():
         print(f"  ollama num_ctx: {OLLAMA_NUM_CTX}  (raise via LME_OLLAMA_NUM_CTX if nav looks truncated)")
     print(f"  index/judge:    {config.COMPILER_PROVIDER}/{config.COMPILER_MODEL}")
     print(f"  PI_RAG={flags['PI_RAG']}  hybrid={flags['HYBRID']}  infer={flags['INFER']}  "
-          f"gate={flags['GATE']}  hyde={flags['HYDE']}  force_agg={flags['FORCE_AGG']}  "
-          f"verify={flags['VERIFY']}  nav_broad={flags['NAV_BROAD']}  reason={flags['REASON']}  "
+          f"gate={flags['GATE']}  nav_broad={flags['NAV_BROAD']}  reason={flags['REASON']}  "
           f"datemath={flags['DATEMATH']}  recency={flags['RECENCY']}  evunion={flags['EVUNION']}  "
           f"rich={flags['RICHINDEX']}  density={flags['DENSITY']}  scope={flags['DENSITY_SCOPE']}  "
           f"tau={pi_rag.TAU}")
@@ -295,8 +287,6 @@ def main():
             "sessions": r["sessions"],
             "n_sessions": len(idx["nodes"]),
             "rag_fired": tr.get("rag_fired", False),
-            "rag_forced": tr.get("rag_forced", False),
-            "rag_verify": tr.get("rag_verify", False),
             "nav_broad": tr.get("nav_broad", False),
             "datemath": tr.get("datemath", ""),
             "datemath_events": tr.get("datemath_events", ""),
@@ -306,7 +296,6 @@ def main():
             "union_retrieved": tr.get("union_retrieved", 0),
             "recency_states": tr.get("recency_states", ""),
             "recency_table": tr.get("recency_table", ""),
-            "verify_verdict": tr.get("verify_verdict", ""),
             "base_answer": tr.get("base_answer", ""),
             "rag_recovered": tr.get("rag_recovered", False),
             "rag_gate": tr.get("rag_gate", ""),
