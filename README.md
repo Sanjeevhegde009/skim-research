@@ -31,7 +31,7 @@ Answers always come from **raw turns**; the summaries and the fact ledger are na
 
 ## Results
 
-Cheap reader (`gpt-4.1-mini`), official judges, best config (`rich + density + scope`):
+Cheap reader (`gpt-4.1-mini`), official judges — **skim**, full config:
 
 | Benchmark | Result |
 |---|---|
@@ -92,9 +92,9 @@ Every flag is documented inline where it is defined in `pageindex.py` / `pi_rag.
 
 ## Benchmark comparison (LongMemEval_S)
 
-Best config (`rich + density + scope`, full 500, official GPT-4o judge). The one **judge-comparable**
-comparison — same judge, same 500 questions — is against the standard strong baseline, GPT-4o reading
-the full ~115K-token history:
+**skim**, full config, full 500, official GPT-4o judge. The one **judge-comparable** comparison —
+same judge, same 500 questions — is against the standard strong baseline, GPT-4o reading the full
+~115K-token history:
 
 | axis | **ours** | GPT-4o full-context |
 |---|---|---|

@@ -3,14 +3,15 @@
 Reader: **gpt-4.1-mini**. Judge: official LongMemEval GPT-4o yes/no (via `rescore_longmemeval.py`).
 Baselines and configs are compared on the **same 500 questions**.
 
-## Best config — `rich + density + scope` = **0.766** (full 500)
+## skim, full config = **0.766** (full 500)
 
-The current best. **Pareto-dominates the stable `holy` baseline (0.722): +0.044 accuracy AND 40% fewer
-reader tokens, with fewer hallucinations.** +0.044 on 500 is above the ±0.02 drift floor (+46 gains /
-−24 regressions, +22 net).
+**Pareto-dominates the 0.722 baseline: +0.044 accuracy AND 40% fewer reader tokens, with fewer
+hallucinations.** +0.044 on 500 is above the ±0.02 drift floor (+46 gains / −24 regressions, +22 net).
+(The full config adds three mechanisms to the 0.722 baseline — ledger navigation, a focused evidence
+window, and count-safe routing; the ladder and flags are below.)
 
-| type | n | holy | rich+density+scope | Δ |
-|------|---|------|--------------------|---|
+| type | n | base 0.722 | skim 0.766 | Δ |
+|------|---|-----------|-----------|---|
 | single-session-user | 70 | 0.829 | 0.929 | +0.100 |
 | single-session-preference | 30 | 0.200 | 0.367 | +0.167 |
 | multi-session | 133 | 0.617 | 0.662 | +0.045 |
@@ -29,29 +30,34 @@ compute).
 
 ## Ladder (official, full 500)
 
-| config | official | notes |
-|--------|----------|-------|
-| baseline | 0.580 | PI_RAG + HYBRID + INFER |
-| +NAV_BROAD +REASON +DATEMATH | 0.654 | beats GPT-4o full-context (0.606) |
-| **holy** = +RECENCY +EVUNION | **0.722** | stable baseline, git tag `holy` |
-| **+RICHINDEX +DENSITY +DENSITY_SCOPE** | **0.766** | git tag `best-0.766` |
+Each step adds mechanisms to the one above; the ablation is what shows 0.766 isn't one lucky trick.
 
-## Mechanisms (all flag-gated, off by default → `holy` byte-identical when unset)
+| step | adds (flags) | plain-English | official |
+|------|--------------|---------------|----------|
+| base | `PI_RAG + HYBRID + INFER` | navigate + RAG escalation + premise gate | 0.580 |
+| + compute | `+ NAV_BROAD + REASON + DATEMATH` | broad nav + scratchpad + date math in code | 0.654 |
+| + recency/union | `+ RECENCY + EVUNION` | latest-value tracking + retrieval-augmented evidence | **0.722** |
+| + nav/evidence | `+ RICHINDEX + DENSITY + DENSITY_SCOPE` | ledger navigation + focused window + count-safe routing | **0.766** |
 
-- **PI_RICHINDEX** — retrieve-over-ledger nav (`rich_index.py`): a de-disguised per-session fact
-  ledger is embedded; navigation ranks sessions by cosine over facts, breaching the lexical disguise
-  summary-nav can't ("out of my league" = a property viewing). Nav-only; answers from raw turns.
-- **PI_DENSITY** — density-preserving assembly (`_assemble_density`): on compute routes the reader
-  gets a retrieval-ranked, capped window (global hybrid top-12 + ≤6 per-nav-session injection) instead
-  of whole navigated sessions, so a pivot fact stays salient rather than diluted.
-- **PI_DENSITY_SCOPE** — route-scoped: the cap applies only to bounded-pivot compute (datemath
-  single-value, recency); counts and orderings keep whole-session + union completeness.
+The 0.722 step is tagged `holy` (the stable baseline); 0.766 is tagged `best-0.766`.
+
+## Mechanisms — the top rung, in detail (flag-gated, off by default; 0.722 is byte-identical when unset)
+
+- **Ledger navigation** (`PI_RICHINDEX`, `rich_index.py`): a de-disguised per-session fact ledger is
+  embedded; navigation ranks sessions by cosine over facts, breaching the lexical disguise summary-nav
+  can't ("out of my league" = a property viewing). Nav-only; answers still come from raw turns.
+- **Focused evidence window** (`PI_DENSITY`, `_assemble_density`): on compute routes the reader gets a
+  retrieval-ranked, capped window (global hybrid top-12 + ≤6 per-nav-session injection) instead of
+  whole navigated sessions, so a pivot fact stays salient rather than diluted.
+- **Count-safe routing** (`PI_DENSITY_SCOPE`): the cap applies only to single-pivot compute (datemath
+  single-value, recency); counts and orderings keep whole-session completeness, because a capped
+  window drops instances a count needs.
 
 ## Reproduce
 
 ```bash
 export OPENAI_API_KEY=sk-...
-# holy's 8 flags + the 3 mechanisms
+# the 0.722 baseline (8 flags) + the 3 top-rung mechanisms
 export PI_RAG=1 PI_RAG_HYBRID=1 PI_RAG_INFER=1 PI_NAV_BROAD=1 PI_REASON=1 \
        PI_DATEMATH=1 PI_RECENCY=1 PI_EVUNION=1 \
        PI_RICHINDEX=1 PI_DENSITY=1 PI_DENSITY_SCOPE=1
@@ -64,5 +70,5 @@ Escape hatches: `PI_DENSITY_SCOPE=` off → blanket rich+density; all three off 
 ## Git references
 
 - `holy` — the stable 0.722 baseline (git tag, commit `bd13855`).
-- `best-0.766` — this config, rich + density + scope (git tag).
+- `best-0.766` — skim's full config: ledger navigation + focused window + count-safe routing (git tag).
 - All on `main`.

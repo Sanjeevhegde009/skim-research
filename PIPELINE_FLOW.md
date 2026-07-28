@@ -1,7 +1,7 @@
-# skim — query-flow diagrams (0.766 best config)
+# skim — query-flow diagrams (full config)
 
-**Config:** `PI_RAG + HYBRID + INFER + NAV_BROAD + REASON + DATEMATH + RECENCY + EVUNION + RICHINDEX + DENSITY + DENSITY_SCOPE`
 **Result:** LongMemEval_S full-500 official **0.766**, reader = gpt-4.1-mini, fabrication 1.8%.
+**Config (all flags, for reproduction):** `PI_RAG + HYBRID + INFER + NAV_BROAD + REASON + DATEMATH + RECENCY + EVUNION + RICHINDEX + DENSITY + DENSITY_SCOPE`
 
 Two models: a **compiler** (gpt-4o-mini) builds the index once; a cheap **reader** (gpt-4.1-mini)
 answers every query. The guiding principle: **the LLM extracts, Python computes** — arithmetic,
