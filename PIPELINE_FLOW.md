@@ -1,7 +1,7 @@
-# PageIndex + RAG — Query Logic Flow (0.722 config)
+# skim — query-flow diagrams (0.766 best config)
 
-**Config:** `PI_RAG + HYBRID + INFER + NAV_BROAD + REASON + DATEMATH + RECENCY + EVUNION`
-**Result:** LongMemEval_S full-500 official **0.722**, reader = gpt-4.1-mini, fabrication 2.6%.
+**Config:** `PI_RAG + HYBRID + INFER + NAV_BROAD + REASON + DATEMATH + RECENCY + EVUNION + RICHINDEX + DENSITY + DENSITY_SCOPE`
+**Result:** LongMemEval_S full-500 official **0.766**, reader = gpt-4.1-mini, fabrication 1.8%.
 
 Two models: a **compiler** (gpt-4o-mini) builds the index once; a cheap **reader** (gpt-4.1-mini)
 answers every query. The guiding principle: **the LLM extracts, Python computes** — arithmetic,
@@ -14,9 +14,11 @@ sorting, and date math are done in code, never in the model's head.
 ```mermaid
 flowchart LR
     S["Haystack:<br/>~50-80 sessions<br/>(~115K tokens)"] --> IDX["INDEX BUILD (compiler, cached)<br/>one node per session +<br/>LLM table-of-contents summary"]
+    S --> RICH["RICH LEDGER (compiler, cached)<br/>de-disguised fact ledger per session,<br/>facts embedded"]
     S --> EMB["TURN EMBEDDINGS + BM25<br/>(built lazily, cached)"]
-    IDX -.feeds.-> NAVI["NAVIGATION<br/>(reads summaries)"]
-    EMB -.feeds.-> RETI["RETRIEVAL / union<br/>(reads raw turns)"]
+    IDX -.feeds.-> NAVS["summary-nav<br/>(reader reads summaries)"]
+    RICH -.feeds.-> NAVR["rich-nav<br/>(cosine over facts)"]
+    EMB -.feeds.-> RETI["retrieval / density window<br/>(reads raw turns)"]
 ```
 
 ---
@@ -36,16 +38,17 @@ flowchart TD
     R3 --> NB
     R4 --> NP["NAVIGATE — precision, cap 3"]
 
-    NB --> NAV["_navigate: LLM reads the session<br/>SUMMARIES (vectorless) and picks<br/>the session keys — no similarity math"]
+    NB --> NAV["NAVIGATE -> session keys<br/>rich-nav (cosine over fact ledger, PI_RICHINDEX)<br/>or summary-nav (reader reads summaries)"]
     NP --> NAV
-    NAV --> COL["Collect RAW TURNS<br/>of the chosen sessions"]
+    NAV --> COL{"assemble evidence<br/>(route-scoped, PI_DENSITY)"}
 
-    COL --> UQ{"compute route?<br/>(datemath / recency / agg)"}
-    UQ -->|"yes (EVUNION)"| UNI["EVIDENCE UNION:<br/>nav turns  +  top-12 hybrid retrieval<br/>(cosine + BM25 over ALL turns,<br/>reaches what summaries erased)"]
-    UQ -->|"no"| ONLY["nav turns only"]
+    COL -->|"single-pivot<br/>(datemath / recency)"| DEN["DENSITY WINDOW:<br/>global hybrid top-12 +<br/>bounded per-nav-session injection<br/>(capped, ~18 turns)"]
+    COL -->|"counts / orderings"| WHOLE["COMPLETENESS:<br/>whole nav sessions +<br/>evidence-union retrieval"]
+    COL -->|"plain lookup"| LK["nav sessions'<br/>raw turns"]
 
-    UNI --> T{"any turns?"}
-    ONLY --> T
+    DEN --> T{"any turns?"}
+    WHOLE --> T
+    LK --> T
     T -->|"no"| REF["REFUSE:<br/>'This information is not available'"]
     T -->|"yes"| DISP{"dispatch by route"}
 
@@ -87,15 +90,21 @@ flowchart LR
 
 ## Legend / notes
 
-- **Vectorless navigation** picks *sessions* by having the reader read the LLM-written summaries —
-  cheap, but lossy (a summary can drop an incidental fact, making its session unfindable).
-- **Evidence union** (EVUNION) patches that lossiness for the compute routes: it also pulls raw
-  turns by cosine+BM25, so a value/event the summary erased can still reach the compute layer.
+- **Navigation** picks *sessions*. Summary-nav (reader reads the LLM summaries, vectorless) is cheap
+  but lossy — a summary drops incidental facts. **Rich-nav** (`PI_RICHINDEX`) embeds a de-disguised
+  fact ledger and retrieves over it, so an incidental mention ("out of my league" = a property
+  viewing) still opens its session. Answers always come from raw turns, never the ledger.
+- **Density assembly** (`PI_DENSITY`) hands the reader a small retrieval-ranked window instead of
+  whole sessions, keeping the pivot fact salient (~3.6× fewer reader tokens on compute questions).
+  **Route scope** (`PI_DENSITY_SCOPE`) applies the cap only to single-pivot compute (datemath /
+  recency); counts and orderings keep whole-session **completeness**, because a capped window drops
+  instances a count needs.
+- **Evidence union** feeds the completeness path: cosine+BM25 over all turns, so a value/event a
+  summary erased still reaches the compute layer.
 - **RAG escalation** fires only on a *refusal* — it re-answers the residue via decompose + a strict
-  premise gate. It is what keeps fabrication low on answerable questions (0.6%).
-- **Where the 2.6% fabrication comes from:** the `EVIDENCE UNION → compute` path also runs when
-  nav returns NONE. On a *false-premise* question (e.g. "…before my job at Google" when there is no
-  Google job), retrieval still returns topically-near turns and the compute layer answers instead of
-  refusing — 10 of 30 abstention questions. This is the known honesty tax of the 0.722 config.
+  premise gate. This is what keeps fabrication low on answerable questions.
+- **Honesty:** overall fabrication is **1.8%** (9/500); on unanswerable questions the system
+  correctly refuses **70%** of the time. The residue is false-premise questions where retrieval still
+  returns topically-near turns and the compute layer answers instead of refusing.
 
 **Render:** GitHub, VS Code (Mermaid extension), or https://mermaid.live all display the diagrams.

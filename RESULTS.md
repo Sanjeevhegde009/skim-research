@@ -63,6 +63,6 @@ Escape hatches: `PI_DENSITY_SCOPE=` off → blanket rich+density; all three off 
 
 ## Git references
 
-- `holy` — the stable 0.722 baseline (commit `bd13855`).
-- `best-0.766` — this config (rich + density + scope).
-- Branch: `feat/rich-index`.
+- `holy` — the stable 0.722 baseline (git tag, commit `bd13855`).
+- `best-0.766` — this config, rich + density + scope (git tag).
+- All on `main`.
