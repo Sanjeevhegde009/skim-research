@@ -13,7 +13,9 @@ conservative cite-or-refuse prompt. RAG escalates **only** when the first pass r
 | Benchmark | Result |
 |---|---|
 | **LoCoMo** (all 10 convs) | 1.275 → **1.352** macro (PageIndex base → +RAG), ~1% hallucination |
-| **LongMemEval** (150-subset) | **0.440** strict judge / **0.587** official GPT-4o judge, ~1.3% fabrication |
+| **LongMemEval_S** (full 500) | **0.766** official GPT-4o judge (best config) — beats GPT-4o full-context (0.606) at ~1/100th the reader cost, 1.8% fabrication |
+
+See **[Benchmark comparison](#benchmark-comparison-longmemeval_s)** for the cost / honesty / accuracy breakdown, and **[RESULTS.md](RESULTS.md)** for the config ladder and reproduce steps.
 
 Only the provider-agnostic LLM-call plumbing is shared infrastructure (`llm.py`) — no wiki
 compiler, no embeddings for navigation.
@@ -81,6 +83,37 @@ LoCoMo, all 10 convs — `gpt-4.1-mini` reader / `gpt-4o-mini` index+judge:
 
 Every number comes from live temperature-0 LLM calls, so it varies slightly run to run.
 Adversarial is scored **deterministically** (a clean refusal = correct), which keeps fabrication ~1%.
+
+## Benchmark comparison (LongMemEval_S)
+
+Best config (`rich + density + scope`, full 500, official GPT-4o judge). The one **judge-comparable**
+comparison — same judge, same 500 questions — is against the standard strong baseline, GPT-4o reading
+the full ~115k-token history:
+
+| axis | **ours** | GPT-4o full-context |
+|---|---|---|
+| accuracy (official) | **0.766** | 0.606 |
+| reader model | `gpt-4.1-mini` | `gpt-4o` |
+| tokens / query | 7,514 | ~115,000 |
+| reader $ / query | **$0.0031** | ~$0.29 |
+| reader $ / correct answer | **$0.0040** | ~$0.47 (**~118×**) |
+| fabrication rate | **1.8%** | high (answers false-premise Qs) |
+| abstention (correct refusals) | **0.700** | — |
+
+Against the baseline everyone anchors on, this wins all three axes at once: **+0.16 accuracy, ~118×
+cheaper per correct answer, and far less fabrication.**
+
+**Where it sits in the wider field — directional, verify before quoting.** Cross-system LongMemEval
+numbers are *not* reliable: reader model, judge, subset, and prompt all differ between reports. Top
+vendor / paper systems (GPT-4o-class readers plus multi-call extraction / knowledge-graph pipelines)
+report the **~0.70–0.80** band and likely edge us on **raw** accuracy. We are not chasing that crown —
+the operating point here is deliberately different:
+
+> **~0.77 accuracy at ~1% of the reader cost, fabrication under 2%, with calibrated refusal.**
+
+For cost-at-scale or trustworthy abstention (production use, not a leaderboard screenshot), that
+frontier is the more useful one. The full ladder (0.580 → 0.654 → `holy` 0.722 → **0.766**), the three
+flag-gated mechanisms, and exact reproduce steps are in **[RESULTS.md](RESULTS.md)**.
 
 ## Notes
 - **Models** are set in `config.py` (default `gpt-4o-mini` compiler/judge + `gpt-4.1-mini` reader). Swap providers there, or for LongMemEval via `LME_READER_MODEL` / `LME_READER_PROVIDER`.
