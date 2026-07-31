@@ -24,6 +24,7 @@ and either cites evidence or refuses.
 
 - **Session** — one dated chat between the user and the assistant. A conversation is many sessions.
 - **Node** — the index entry for one session: `{key, date, ToC summary, raw turns}`.
+- **Session key** — a session's identifier (e.g. `session_3`). Navigation's entire output is a *list of session keys* — "open these sessions"; the next stage pulls their raw turns.
 - **ToC summary** — the 2–4 sentence "table of contents" the compiler writes per session, describing what it covers. This is the map the reader navigates.
 - **Fact ledger** — a per-session list of **de-disguised** facts: every concrete instance restated as *what it is*, cited to its turn (e.g. *"that one was out of my league"* → *"viewed a property [property viewing]"*). Used for **navigation only**; answers never come from it.
 - **question_date** — the date the question is asked ("now"); the reference point for "… ago" arithmetic. On LongMemEval it is given per question; on LoCoMo it is the latest session's date.
@@ -66,13 +67,12 @@ flowchart TD
     CL -->|"is_aggregate / needs_reasoning"| AG["route = AGGREGATE"]
     CL -->|"none of the above"| LK["route = LOOKUP"]
 
-    DM --> NAVB["2. NAVIGATE — broad (open up to 8 sessions)"]
-    RC --> NAVB
-    AG --> NAVB
-    LK --> NAVP["2. NAVIGATE — precise (open up to 3 sessions)"]
+    DM -->|"broad: cap 8"| NAV
+    RC -->|"broad: cap 8"| NAV
+    AG -->|"broad: cap 8"| NAV
+    LK -->|"precise: cap 3"| NAV
 
-    NAVB --> NAV["ledger-nav: cosine over the fact ledger (PI_RICHINDEX)<br/>OR summary-nav: reader reads the ToC summaries<br/>-> a list of session keys"]
-    NAVP --> NAV
+    NAV["2. NAVIGATE — ONE step, ONE navigator<br/>ledger-nav (cosine over the fact ledger, PI_RICHINDEX)<br/>OR summary-nav (reader reads the ToC summaries)<br/>-> a list of session keys = which sessions to open"]
 
     NAV --> ASM{"3. ASSEMBLE EVIDENCE"}
     ASM -->|"single-pivot: datemath value / recency"| DEN["FOCUSED WINDOW (_assemble_density)<br/>hybrid top-12 turns + bounded per-session injection<br/>(capped, ~18 turns)"]
@@ -98,9 +98,11 @@ flowchart TD
 
 **Stage 1 — Classify.** Regex triggers pick the route and whether navigation goes broad or precise. Precedence is `datemath -> recency -> aggregate -> lookup`. No LLM call.
 
-**Stage 2 — Navigate.** Two navigators, selected by the `PI_RICHINDEX` flag:
+**Stage 2 — Navigate.** This is **one step run by exactly one navigator** — the `PI_RICHINDEX` flag chooses which; they are alternatives, not sequential passes. Its whole output is a **list of session keys** ("open these sessions"). The cap from stage 1 (8 broad / 3 precise) applies to whichever runs.
 - **summary-nav** (`_navigate`): the reader reads the ToC summaries and names the sessions to open — reasoning over the map, no similarity math.
 - **ledger-nav** (`rich_index.navigate_rich`): cosine of the question against the fact ledger; returns sessions whose best fact clears a relevance floor. Finds incidental instances the summaries dropped.
+
+The `cosine over turns` you may notice again in stage 3 is a **different** retrieval, over a **different** target: navigation matches the question against *facts* to pick *sessions*; assembly matches it against *raw turns* to pick the *text the reader reads*.
 
 **Stage 3 — Assemble evidence.** Two paths, routed by `PI_DENSITY_SCOPE`:
 - **Focused window** (`_assemble_density`) for **single-pivot** compute (one date value, the latest value): the reader gets a small retrieval-ranked window (hybrid top-12 + a bounded injection of turns from navigated sessions), so the one pivot fact stays salient instead of diluted in whole transcripts.
