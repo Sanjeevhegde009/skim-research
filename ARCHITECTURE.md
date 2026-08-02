@@ -28,7 +28,7 @@ and either cites evidence or refuses.
 - **ToC summary** — the 2–4 sentence "table of contents" the compiler writes per session, describing what it covers. This is the map the reader navigates.
 - **Fact ledger** — a per-session list of **de-disguised** facts: every concrete instance restated as *what it is*, cited to its turn (e.g. *"that one was out of my league"* → *"viewed a property [property viewing]"*). Used for **navigation only**; answers never come from it.
 - **question_date** — the date the question is asked ("now"); the reference point for "… ago" arithmetic. On LongMemEval it is given per question; on LoCoMo it is the latest session's date.
-- **Hybrid retrieval** — ranking raw turns by **cosine** similarity *and* **BM25** lexical overlap, fused. Catches both semantic matches and exact-term matches (a name, a date).
+- **Hybrid retrieval** — ranking raw turns by **cosine** similarity *and* **BM25** lexical overlap, fused by reciprocal-rank fusion. Catches both semantic matches (paraphrases) and exact-term matches (a name, a date). Always runs over **all** turns of the conversation, not just the navigated sessions.
 - **Premise gate** — a deterministic check: if retrieval finds **no evidence for what the question assumes**, refuse instead of answering.
 - **Route** — which answer machine a question is sent to: `datemath`, `recency`, `aggregate`, or `lookup`.
 
@@ -52,6 +52,25 @@ flowchart LR
 - **A. Navigation index** — `pageindex.build_index`. One node per session; the compiler writes the ToC summary. This is what summary-navigation reads.
 - **B. Turn embeddings** — `pi_rag.turn_embeddings`. Used by hybrid retrieval and the focused-window assembly. Built lazily (only conversations that escalate pay for it).
 - **C. Fact ledger** — `rich_index.build_rich`. The de-disguised facts are embedded so navigation can find an incidental instance a ToC summary dropped. Cached in its **own** directory so it never touches artifact A.
+
+### ToC summary vs fact ledger — two different maps of the same session
+
+Artifacts **A** and **C** are easy to conflate. Both are per-session and both are **navigation-only** (neither is ever used to *answer*), but that is where the similarity ends:
+
+| | **ToC summary** (drives summary-nav) | **fact ledger** (drives ledger-nav) |
+|---|---|---|
+| content | the session's main **topics** | every concrete **instance** in it |
+| form | 2–4 sentences of **prose** | a **list** of de-disguised fact lines |
+| used how | the reader **reads** it and **reasons** which sessions to open (no embeddings) | each fact is **embedded**; nav does **cosine** match, question ↔ facts |
+| completeness | **lossy** — a short digest drops incidental mentions | **preserving** — deliberately captures them |
+| disguise | keeps the user's wording | **de-disguises** ("out of my league" → "a property viewing") |
+
+The **same session**, both ways — a chat mostly about home-warranty shopping with one passing property mention:
+
+- **ToC summary:** *"Compares home-warranty providers and coverage costs; mentions a recent house search."*
+- **fact ledger:** `- compared home-warranty providers [research]` · `- viewed a Cedar Creek property; too expensive [property viewing]` · …
+
+Ask *"How many properties did I view?"* — ledger-nav's *"viewed a Cedar Creek property"* cosine-matches and opens the session; summary-nav's *"home-warranty coverage"* does not, and misses it. That gap is the whole reason the ledger exists: the ToC is a **topic map** (PageIndex, out of the box), the ledger is an **instance index** (skim's addition). Neither wins everywhere — the ToC is better on plain lookups, the ledger on disguised/scattered instances.
 
 ---
 
@@ -104,15 +123,44 @@ flowchart TD
 
 The `cosine over turns` you may notice again in stage 3 is a **different** retrieval, over a **different** target: navigation matches the question against *facts* to pick *sessions*; assembly matches it against *raw turns* to pick the *text the reader reads*.
 
-**Stage 3 — Assemble evidence.** Two paths, routed by `PI_DENSITY_SCOPE`:
-- **Focused window** (`_assemble_density`) for **single-pivot** compute (one date value, the latest value): the reader gets a small retrieval-ranked window (hybrid top-12 + a bounded injection of turns from navigated sessions), so the one pivot fact stays salient instead of diluted in whole transcripts.
-- **Completeness** (`_collect_turns` + evidence-union `_recency_retrieve`) for **counts, orderings, and plain lookups**: whole navigated sessions plus a hybrid top-12 over all turns — because a count needs *every* instance and a capped window would drop some.
+**Stage 3 — Assemble evidence.** Turn the session keys into the actual turns the reader reads. `PI_DENSITY_SCOPE` routes to a **focused window** (single-pivot) or **completeness** (counts / orderings / lookups). One fact to carry forward: the retrieval here is **global** — it ranks *all* turns, not just the navigated ones. Full mechanics in [Evidence assembly (Stage 3), in detail](#evidence-assembly-stage-3-in-detail) below.
 
 **Stage 4 — Refuse if empty.** No turns gathered → *"This information is not available."*
 
 **Stage 5 — Dispatch.** The route decides the answer machine (see next section for datemath/recency).
 
 **Stage 6 — Escalate only on refusal.** If the base answer is a refusal, `pi_rag.answer` runs the residue: decompose the question into a premise-probe plus 2–4 sub-questions, apply the **premise gate**, hybrid-retrieve per sub-question, and compose. Its answer is adopted only if it recovers a non-refusal.
+
+---
+
+## Evidence assembly (Stage 3), in detail
+
+Stage 3 converts the **session keys** from navigation into the **raw turns** the reader actually reads. Two facts up front:
+
+**"Hybrid" retrieval** = ranking turns by two signals fused: **cosine** (semantic embedding similarity — catches paraphrases: *"what speed is my plan?"* ↔ *"I upgraded to 500 Mbps"*) **+ BM25** (lexical term overlap — catches an exact name or date stated once). They are combined by reciprocal-rank fusion (`_hybrid_hits`): a turn scores `1/(60+cosine_rank) + 1/(60+bm25_rank)`, and the top-K by that sum are kept. A turn surfaces if it's semantically near **or** lexically matching.
+
+**Hybrid retrieval is GLOBAL** — it ranks *every turn in the whole conversation*; it does **not** restrict to the navigated sessions. The session keys from navigation are used *separately* (below). This is why a question can be answered correctly even when navigation returned nothing — retrieval finds the turns on its own.
+
+The three cases:
+
+**Focused window** (`_assemble_density` — single-pivot: one date value / latest value) — a capped, retrieval-ranked window of ~12–18 turns:
+- **base** = the global hybrid **top-12** (over all turns) — retrieval's best, *ignoring* which sessions nav picked.
+- **injection** = navigation's **rescue**: for each **navigated session** not already represented in `base`, add its top ~2 turns that clear a relevance floor (up to ~6 total). This is the *only* place the session keys enter — a disguised turn that global retrieval ranked too low still gets into the window because its session was navigated to.
+- window = base ∪ injection, in chronological order.
+
+**Completeness** (`_collect_turns` + evidence-union `_recency_retrieve` — counts / orderings):
+- **whole navigated sessions** — every turn of the sessions navigation opened, plus
+- **the global hybrid top-12, deduplicated** — the top-12 over all turns *minus* any already inside those sessions (so the net-new count is often well below 12). Reaches scattered evidence a summary may have erased.
+
+**Plain lookup** (single-hop factual recall) takes the completeness path but with the union **off** — **just the whole navigated sessions**, no global hybrid addition.
+
+| route | evidence the reader gets |
+|---|---|
+| single-pivot (datemath value, recency) | global hybrid top-12 **+ nav-session injection** (capped ~18) |
+| counts / orderings | whole nav sessions **+ deduplicated global hybrid top-12** |
+| plain lookup | **whole nav sessions only** |
+
+The takeaway: **navigation and retrieval are complementary, not filter-then-search.** Retrieval always looks everywhere; navigation contributes the *injection rescue* (focused window) or the *whole-session base* (completeness). In the focused-window path the reader's evidence is retrieval-dominated; in the completeness path the navigated sessions dominate.
 
 ---
 
