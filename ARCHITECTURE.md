@@ -251,4 +251,4 @@ On LongMemEval this holds fabrication to **1.8%**.
 | **LongMemEval_S** (full 500) | full config | **0.766** official GPT-4o judge | beats GPT-4o full-context (0.606) at ~1/100th the reader cost; 1.8% fabrication |
 | **LoCoMo** (all 10) | minimal config | **1.352** macro | the full-config mechanisms are net-negative here — LoCoMo conversations fit in context, so the large-haystack machinery over-retrieves and costs precision/honesty |
 
-The mechanisms are a **large-haystack** story: they earn their keep when the history overflows the context window (LongMemEval's ~115K tokens), not when it fits (LoCoMo's ~16K). Full ladder and reproduce steps: [RESULTS.md](RESULTS.md). Query-flow-only diagrams: [PIPELINE_FLOW.md](PIPELINE_FLOW.md).
+The mechanisms are a **large-haystack** story: they earn their keep when the history overflows the context window (LongMemEval's ~115K tokens), not when it fits (LoCoMo's ~16K). Full ladder and reproduce steps: [RESULTS.md](RESULTS.md).

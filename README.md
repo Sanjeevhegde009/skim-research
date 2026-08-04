@@ -29,6 +29,8 @@ every query.
 
 Answers always come from **raw turns**; the summaries and the fact ledger are navigation aids only.
 
+Full design — diagrams, a glossary, and one question traced through every stage: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
 ## Results
 
 Cheap reader (`gpt-4.1-mini`), official judges:
@@ -58,7 +60,7 @@ Adversarial is scored **deterministically** (a clean refusal = correct), which h
 1%. All numbers come from live temperature-0 calls, so totals move by ~±0.02 run to run.
 
 Full config ladder (0.580 → 0.654 → 0.722 → **0.766**) and per-mechanism detail:
-**[RESULTS.md](RESULTS.md)**. Query-flow diagrams: **[PIPELINE_FLOW.md](PIPELINE_FLOW.md)**.
+**[RESULTS.md](RESULTS.md)**.
 
 ## Setup
 ```bash
@@ -144,8 +146,8 @@ baselines.py            naive comparison strategies (library only)
 probe_*.py              standalone diagnostics (retrieval-vs-reasoning; rich-index feasibility)
 download_data.sh        fetch both datasets from their official sources
 
+ARCHITECTURE.md         full design: offline build + query flow, mermaid diagrams, worked example
 RESULTS.md              config ladder, best-config numbers, reproduce steps
-PIPELINE_FLOW.md        query-flow diagrams (mermaid)
 FAILURE_ANALYSIS.md     the 0.580-baseline failure map that motivated the mechanisms
 
 data/                   datasets (gitignored)
