@@ -42,17 +42,12 @@ Each step adds mechanisms to the one above; the ablation is what shows 0.766 isn
 
 The 0.722 step is tagged `baseline-0.722`; the full config is tagged `best-0.766`.
 
-## The three added mechanisms, in detail (flag-gated, off by default; the 0.722 config is byte-identical when unset)
+## The three added mechanisms
 
-- **Ledger navigation** (`PI_RICHINDEX`, `rich_index.py`): a de-disguised per-session fact ledger is
-  embedded; navigation ranks sessions by cosine over facts, breaching the lexical disguise summary-nav
-  can't ("out of my league" = a property viewing). Nav-only; answers still come from raw turns.
-- **Focused evidence window** (`PI_DENSITY`, `_assemble_density`): on compute routes the reader gets a
-  retrieval-ranked, capped window (global hybrid top-12 + ≤6 per-nav-session injection) instead of
-  whole navigated sessions, so a pivot fact stays salient rather than diluted.
-- **Count-safe routing** (`PI_DENSITY_SCOPE`): the cap applies only to single-pivot compute (datemath
-  single-value, recency); counts and orderings keep whole-session completeness, because a capped
-  window drops instances a count needs.
+On top of the 0.722 config, the full config adds **ledger navigation** (`PI_RICHINDEX`), a **focused
+evidence window** (`PI_DENSITY`), and **count-safe routing** (`PI_DENSITY_SCOPE`). All three are
+flag-gated and default off, so the 0.722 config is byte-identical when they are unset. What each one is
+and how it works: **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ## Reproduce
 
