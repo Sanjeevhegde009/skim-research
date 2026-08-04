@@ -31,12 +31,17 @@ Answers always come from **raw turns**; the summaries and the fact ledger are na
 
 ## Results
 
-Cheap reader (`gpt-4.1-mini`), official judges — **skim**, full config:
+Cheap reader (`gpt-4.1-mini`), official judges:
 
-| Benchmark | Result |
-|---|---|
-| **LongMemEval_S** (full 500) | **0.766** official GPT-4o judge — beats GPT-4o full-context (0.606) at ~1/100th the reader cost, 1.8% fabrication. See [Benchmark comparison](#benchmark-comparison-longmemeval_s). |
-| **LoCoMo** (all 10 convs) | **1.352** macro — see the per-category table below |
+| Benchmark | Config | Result |
+|---|---|---|
+| **LongMemEval_S** (full 500) | skim, full config | **0.766** official GPT-4o judge — beats GPT-4o full-context (0.606) at ~1/100th the reader cost, 1.8% fabrication. See [Benchmark comparison](#benchmark-comparison-longmemeval_s). |
+| **LoCoMo** (all 10 convs) | minimal config | **1.352** macro (0–2 judge) — per-category table below |
+
+The three added mechanisms (ledger navigation, focused window, count-safe routing) were built and
+validated on **LongMemEval_S**, whose ~115K-token haystacks overflow the context window. **LoCoMo**
+conversations (~16K tokens) fit in context, so the numbers below are the **minimal config**; the full
+config has not yet been evaluated on LoCoMo.
 
 LoCoMo, all 10 convs — `gpt-4.1-mini` reader / `gpt-4o-mini` index+judge (judge score is 0–2):
 
