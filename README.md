@@ -117,7 +117,7 @@ once: **+0.16 accuracy, ~118× cheaper per correct answer, and far less fabricat
 **Where it sits in the wider field — directional, verify before quoting.** Cross-system LongMemEval
 numbers are *not* reliable: reader model, judge, subset, and prompt all differ between reports. Top
 vendor / paper systems (GPT-4o-class readers plus multi-call extraction / knowledge-graph pipelines)
-report the **~0.70–0.80** band and likely edge us on **raw** accuracy. This project is not chasing
+report higher accuracy. This project is not chasing
 that crown — the operating point is deliberately different:
 
 > **~0.77 accuracy at ~1% of the reader cost, fabrication under 2%, with calibrated refusal.**
